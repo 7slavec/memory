@@ -5,6 +5,7 @@
 //  Created by Вячеслав Храмышкин on 15.09.2026.
 //
 
+import Foundation
 import SwiftData
 import Testing
 @testable import Memory
@@ -34,6 +35,19 @@ struct MemoryTests {
 
         #expect(savedItems.count == 1)
         #expect(savedItems.first?.title == "Записать идею")
+    }
+
+    @Test func itemStoresReminderAndCompletionDate() {
+        let reminderDate = Date.now.addingTimeInterval(3600)
+        let item = Item(title: "Позвонить", dueDate: reminderDate)
+        #expect(item.dueDate == reminderDate)
+        #expect(item.completedAt == nil)
+        item.setCompleted(true)
+        #expect(item.isCompleted)
+        #expect(item.completedAt != nil)
+        item.setCompleted(false)
+        #expect(!item.isCompleted)
+        #expect(item.completedAt == nil)
     }
 
 }
