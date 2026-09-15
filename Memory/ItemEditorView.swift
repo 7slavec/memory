@@ -11,6 +11,7 @@ struct ItemEditorView: View {
     @State private var notificationsEnabled: Bool
 #if os(macOS)
     @State private var isCalendarPresented = false
+    @State private var isTimePickerPresented = false
 #endif
 
     init(
@@ -109,6 +110,38 @@ struct ItemEditorView: View {
         }
         .frame(width: 560, height: 600)
         .background(MemoryTheme.background)
+        .overlay { macPickerOverlay }
+        .animation(.easeInOut(duration: 0.16), value: isCalendarPresented)
+        .animation(.easeInOut(duration: 0.16), value: isTimePickerPresented)
+    }
+
+    @ViewBuilder
+    private var macPickerOverlay: some View {
+        if isCalendarPresented || isTimePickerPresented {
+            ZStack {
+                Color.black.opacity(0.34)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isCalendarPresented = false
+                        isTimePickerPresented = false
+                    }
+
+                if isCalendarPresented {
+                    MemoryCalendarPicker(
+                        selection: $scheduledDate,
+                        isPresented: $isCalendarPresented
+                    )
+                    .transition(.scale(scale: 0.96).combined(with: .opacity))
+                } else {
+                    MemoryTimePicker(
+                        selection: $scheduledDate,
+                        isPresented: $isTimePickerPresented
+                    )
+                    .transition(.scale(scale: 0.96).combined(with: .opacity))
+                }
+            }
+        }
     }
 
     private var macHeader: some View {
@@ -198,6 +231,7 @@ struct ItemEditorView: View {
                             .foregroundStyle(.secondary)
 
                         Button {
+                            isTimePickerPresented = false
                             isCalendarPresented.toggle()
                         } label: {
                             HStack(spacing: 9) {
@@ -220,18 +254,6 @@ struct ItemEditorView: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        .popover(isPresented: $isCalendarPresented, arrowEdge: .bottom) {
-                            DatePicker(
-                                "Дата",
-                                selection: $scheduledDate,
-                                displayedComponents: .date
-                            )
-                            .datePickerStyle(.graphical)
-                            .labelsHidden()
-                            .environment(\.locale, Locale(identifier: "ru_RU"))
-                            .padding(16)
-                            .frame(width: 300)
-                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -240,25 +262,33 @@ struct ItemEditorView: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
 
-                        HStack(spacing: 9) {
-                            Image(systemName: "clock")
-                                .foregroundStyle(MemoryTheme.accent)
+                        Button {
+                            isCalendarPresented = false
+                            isTimePickerPresented.toggle()
+                        } label: {
+                            HStack(spacing: 9) {
+                                Image(systemName: "clock")
+                                    .foregroundStyle(MemoryTheme.accent)
 
-                            DatePicker(
-                                "Время",
-                                selection: $scheduledDate,
-                                displayedComponents: .hourAndMinute
-                            )
-                            .labelsHidden()
+                                Text(scheduledDate.formatted(date: .omitted, time: .shortened))
+                                    .font(.body.monospacedDigit())
+
+                                Spacer(minLength: 4)
+
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(height: 36)
+                            .background(Color.primary.opacity(0.045))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                            }
                         }
-                        .padding(.horizontal, 12)
-                        .frame(height: 36)
-                        .background(Color.primary.opacity(0.045))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
-                        }
+                        .buttonStyle(.plain)
                     }
                     .frame(width: 150, alignment: .leading)
                 }
@@ -378,3 +408,337 @@ struct ItemEditorView: View {
         return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
     }
 }
+
+#if os(macOS)
+private struct MemoryCalendarPicker: View {
+    @Binding var selection: Date
+    @Binding var isPresented: Bool
+    @State private var visibleMonth: Date
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+    private let weekdayTitles = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+    init(selection: Binding<Date>, isPresented: Binding<Bool>) {
+        _selection = selection
+        _isPresented = isPresented
+        _visibleMonth = State(initialValue: Self.startOfMonth(for: selection.wrappedValue))
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Button { moveMonth(by: -1) } label: {
+                    Image(systemName: "chevron.left")
+                        .frame(width: 30, height: 30)
+                        .background(Color.primary.opacity(0.055))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text(monthTitle)
+                    .font(.headline)
+
+                Spacer()
+
+                Button { moveMonth(by: 1) } label: {
+                    Image(systemName: "chevron.right")
+                        .frame(width: 30, height: 30)
+                        .background(Color.primary.opacity(0.055))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(weekdayTitles, id: \.self) { title in
+                    Text(title)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(height: 24)
+                }
+
+                ForEach(Array(monthDays.enumerated()), id: \.offset) { _, day in
+                    if let day {
+                        calendarDay(day)
+                    } else {
+                        Color.clear.frame(height: 34)
+                    }
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Button("Сегодня") {
+                    selectDay(.now)
+                    visibleMonth = Self.startOfMonth(for: .now)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(MemoryTheme.accent)
+
+                Spacer()
+
+                Button("Готово") {
+                    isPresented = false
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(MemoryTheme.accent)
+            }
+        }
+        .padding(18)
+        .frame(width: 340)
+        .background(MemoryTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.32), radius: 30, y: 16)
+    }
+
+    private func calendarDay(_ day: Date) -> some View {
+        let isSelected = calendar.isDate(day, inSameDayAs: selection)
+        let isToday = calendar.isDateInToday(day)
+
+        return Button {
+            selectDay(day)
+        } label: {
+            ZStack {
+                if isSelected {
+                    Circle().fill(MemoryTheme.accent)
+                } else if isToday {
+                    Circle().stroke(MemoryTheme.accent.opacity(0.65), lineWidth: 1.5)
+                }
+
+                Text("\(calendar.component(.day, from: day))")
+                    .font(.system(size: 13, weight: isSelected || isToday ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? Color.white : Color.primary)
+            }
+            .frame(width: 34, height: 34)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "ru_RU")
+        calendar.firstWeekday = 2
+        return calendar
+    }
+
+    private var monthDays: [Date?] {
+        let start = Self.startOfMonth(for: visibleMonth)
+        guard let dayRange = calendar.range(of: .day, in: .month, for: start) else { return [] }
+        let weekday = calendar.component(.weekday, from: start)
+        let leadingEmptyDays = (weekday - calendar.firstWeekday + 7) % 7
+        var result = Array<Date?>(repeating: nil, count: leadingEmptyDays)
+
+        result.append(contentsOf: dayRange.compactMap { day in
+            calendar.date(byAdding: .day, value: day - 1, to: start)
+        })
+        return result
+    }
+
+    private var monthTitle: String {
+        let value = Self.monthFormatter.string(from: visibleMonth)
+        return value.prefix(1).uppercased() + value.dropFirst()
+    }
+
+    private func moveMonth(by value: Int) {
+        guard let month = calendar.date(byAdding: .month, value: value, to: visibleMonth) else { return }
+        withAnimation(.easeInOut(duration: 0.16)) {
+            visibleMonth = Self.startOfMonth(for: month)
+        }
+    }
+
+    private func selectDay(_ day: Date) {
+        let time = calendar.dateComponents([.hour, .minute, .second], from: selection)
+        var components = calendar.dateComponents([.year, .month, .day], from: day)
+        components.hour = time.hour
+        components.minute = time.minute
+        components.second = time.second
+        if let updatedDate = calendar.date(from: components) {
+            selection = updatedDate
+        }
+    }
+
+    private static func startOfMonth(for date: Date) -> Date {
+        let calendar = Calendar(identifier: .gregorian)
+        return calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
+    }
+
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "LLLL yyyy"
+        return formatter
+    }()
+}
+
+private struct MemoryTimePicker: View {
+    @Binding var selection: Date
+    @Binding var isPresented: Bool
+    @State private var typedTime: String
+    @State private var hasInvalidTime = false
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+    private let timeOptions = [
+        8 * 60, 9 * 60, 9 * 60 + 30, 10 * 60,
+        12 * 60, 13 * 60, 14 * 60, 15 * 60,
+        17 * 60, 18 * 60, 19 * 60, 20 * 60,
+        21 * 60, 22 * 60, 23 * 60, 23 * 60 + 30
+    ]
+
+    init(selection: Binding<Date>, isPresented: Binding<Bool>) {
+        _selection = selection
+        _isPresented = isPresented
+        _typedTime = State(initialValue: Self.timeString(from: selection.wrappedValue))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Выберите время")
+                        .font(.headline)
+                    Text("Одним нажатием или введите точное")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 28, height: 28)
+                        .background(Color.primary.opacity(0.055))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Быстрый выбор")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(timeOptions, id: \.self) { minutes in
+                        timeButton(minutes)
+                    }
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Точное время")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    TextField("ЧЧ:ММ", text: $typedTime)
+                        .textFieldStyle(.plain)
+                        .font(.body.monospacedDigit())
+                        .padding(.horizontal, 12)
+                        .frame(height: 36)
+                        .background(Color.primary.opacity(0.045))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(hasInvalidTime ? Color.red : Color.primary.opacity(0.07), lineWidth: 1)
+                        }
+                        .onSubmit(applyTypedTime)
+                        .onChange(of: typedTime) { _, _ in hasInvalidTime = false }
+
+                    Button("Применить") {
+                        applyTypedTime()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(MemoryTheme.accent)
+                }
+
+                if hasInvalidTime {
+                    Text("Введите время в формате 09:30")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 340)
+        .background(MemoryTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.32), radius: 30, y: 16)
+    }
+
+    private func timeButton(_ minutes: Int) -> some View {
+        let isSelected = selectedMinutes == minutes
+
+        return Button {
+            apply(minutes: minutes)
+            isPresented = false
+        } label: {
+            Text(Self.timeString(minutes: minutes))
+                .font(.system(size: 13, weight: isSelected ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 32)
+                .background(isSelected ? MemoryTheme.accent : Color.primary.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var selectedMinutes: Int {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: selection)
+        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+    }
+
+    private func applyTypedTime() {
+        let parts = typedTime
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let hour = Int(parts[0]),
+              let minute = Int(parts[1]),
+              (0...23).contains(hour),
+              (0...59).contains(minute) else {
+            hasInvalidTime = true
+            return
+        }
+
+        apply(minutes: hour * 60 + minute)
+        isPresented = false
+    }
+
+    private func apply(minutes: Int) {
+        let calendar = Calendar.current
+        selection = calendar.date(
+            bySettingHour: minutes / 60,
+            minute: minutes % 60,
+            second: 0,
+            of: selection
+        ) ?? selection
+        typedTime = Self.timeString(minutes: minutes)
+    }
+
+    private static func timeString(from date: Date) -> String {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return timeString(minutes: (components.hour ?? 0) * 60 + (components.minute ?? 0))
+    }
+
+    private static func timeString(minutes: Int) -> String {
+        String(format: "%02d:%02d", minutes / 60, minutes % 60)
+    }
+}
+#endif
