@@ -1,5 +1,8 @@
 import SwiftData
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 enum MemorySection: String, CaseIterable, Identifiable {
     case now, inbox, completed, search
@@ -40,6 +43,9 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var editingItem: Item?
     @State private var errorMessage: String?
+#if os(iOS)
+    @State private var isKeyboardVisible = false
+#endif
 
     var body: some View {
         Group {
@@ -102,7 +108,18 @@ struct ContentView: View {
         NavigationStack {
             sectionContent.toolbar(.hidden, for: .navigationBar)
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { mobileTabBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !isKeyboardVisible {
+                mobileTabBar.transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: isKeyboardVisible)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
+        }
     }
 
     private var mobileTabBar: some View {
@@ -142,6 +159,9 @@ struct ContentView: View {
             .padding(.horizontal, 20).padding(.top, 24).padding(.bottom, 36)
             .frame(maxWidth: .infinity)
         }
+#if os(iOS)
+        .scrollDismissesKeyboard(.interactively)
+#endif
         .background(MemoryTheme.background)
     }
 
@@ -332,8 +352,14 @@ private struct QuickCaptureCard: View {
                 Image(systemName: "plus")
                     .font(.system(size: 15, weight: .bold)).foregroundStyle(MemoryTheme.accent)
                     .frame(width: 34, height: 34).background(MemoryTheme.accent.opacity(0.12)).clipShape(Circle())
-                TextField("Что нужно запомнить?", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain).lineLimit(1...3).focused($isFocused).onSubmit(submit)
+                TextField("Что нужно запомнить?", text: $draft)
+                    .textFieldStyle(.plain)
+                    .focused($isFocused)
+                    .onSubmit(submit)
+#if os(iOS)
+                    .submitLabel(.done)
+                    .textInputAutocapitalization(.sentences)
+#endif
                 Button(action: submit) {
                     Image(systemName: "arrow.up").font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
                         .frame(width: 34, height: 34)
@@ -356,6 +382,20 @@ private struct QuickCaptureCard: View {
             }
         }
         .padding(18).memoryCard()
+#if os(iOS)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Button("Отмена") {
+                    draft = ""
+                    isFocused = false
+                }
+                Spacer()
+                Text("«Готово» добавит задачу")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+#endif
     }
 
     private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }

@@ -9,7 +9,7 @@ enum MemoryTheme {
 #if os(macOS)
         Color(nsColor: .windowBackgroundColor)
 #else
-        Color(red: 0.965, green: 0.965, blue: 0.985)
+        Color(uiColor: .systemGroupedBackground)
 #endif
     }
 
