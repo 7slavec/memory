@@ -3,19 +3,28 @@ import SwiftUI
 struct ItemEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let item: Item
-    let onSave: (String, Date?) -> Void
+    let onSave: (String, Date?, Bool) -> Void
     let onDelete: () -> Void
     @State private var title: String
-    @State private var hasReminder: Bool
-    @State private var reminderDate: Date
+    @State private var hasSchedule: Bool
+    @State private var scheduledDate: Date
+    @State private var notificationsEnabled: Bool
+#if os(macOS)
+    @State private var isCalendarPresented = false
+#endif
 
-    init(item: Item, onSave: @escaping (String, Date?) -> Void, onDelete: @escaping () -> Void) {
+    init(
+        item: Item,
+        onSave: @escaping (String, Date?, Bool) -> Void,
+        onDelete: @escaping () -> Void
+    ) {
         self.item = item
         self.onSave = onSave
         self.onDelete = onDelete
         _title = State(initialValue: item.title)
-        _hasReminder = State(initialValue: item.dueDate != nil)
-        _reminderDate = State(initialValue: item.dueDate ?? Self.defaultReminderDate)
+        _hasSchedule = State(initialValue: item.dueDate != nil)
+        _scheduledDate = State(initialValue: item.dueDate ?? Self.defaultScheduledDate)
+        _notificationsEnabled = State(initialValue: item.notificationsEnabled)
     }
 
     var body: some View {
@@ -33,10 +42,20 @@ struct ItemEditorView: View {
                 Section("Запись") {
                     TextField("Что нужно запомнить?", text: $title, axis: .vertical).lineLimit(2...6)
                 }
-                Section("Напоминание") {
-                    Toggle("Напомнить", isOn: $hasReminder)
-                    if hasReminder {
-                        DatePicker("Дата и время", selection: $reminderDate, displayedComponents: [.date, .hourAndMinute])
+                Section("Планирование") {
+                    Toggle("Добавить дату", isOn: $hasSchedule)
+                    if hasSchedule {
+                        DatePicker("Дата", selection: $scheduledDate, displayedComponents: .date)
+                        DatePicker("Время", selection: $scheduledDate, displayedComponents: .hourAndMinute)
+                    }
+                }
+                Section("Уведомление") {
+                    Toggle("Прислать уведомление", isOn: $notificationsEnabled)
+                        .disabled(!hasSchedule)
+                    if !hasSchedule {
+                        Text("Сначала добавьте дату и время")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Section {
@@ -63,6 +82,9 @@ struct ItemEditorView: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .onChange(of: hasSchedule) { _, isScheduled in
+            if !isScheduled { notificationsEnabled = false }
+        }
     }
 #endif
 
@@ -75,7 +97,8 @@ struct ItemEditorView: View {
 
             VStack(spacing: 16) {
                 macTitleCard
-                macReminderCard
+                macScheduleCard
+                macNotificationCard
             }
             .padding(24)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -84,7 +107,7 @@ struct ItemEditorView: View {
 
             macFooter
         }
-        .frame(width: 540, height: 500)
+        .frame(width: 560, height: 600)
         .background(MemoryTheme.background)
     }
 
@@ -104,7 +127,7 @@ struct ItemEditorView: View {
                 Text("Редактировать запись")
                     .font(.title3.weight(.semibold))
 
-                Text("Обновите текст или время напоминания")
+                Text("Настройте запись, дату и уведомление")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -137,7 +160,7 @@ struct ItemEditorView: View {
         .memoryCard()
     }
 
-    private var macReminderCard: some View {
+    private var macScheduleCard: some View {
         VStack(spacing: 14) {
             HStack(spacing: 12) {
                 ZStack {
@@ -145,49 +168,140 @@ struct ItemEditorView: View {
                         .fill(MemoryTheme.accent.opacity(0.13))
                         .frame(width: 34, height: 34)
 
-                    Image(systemName: "bell.fill")
+                    Image(systemName: "calendar")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(MemoryTheme.accent)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Напоминание")
+                    Text("Планирование")
                         .font(.body.weight(.medium))
-                    Text(hasReminder ? "Уведомление включено" : "Без уведомления")
+                    Text(hasSchedule ? scheduleSummary : "Без даты и времени")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Toggle("", isOn: $hasReminder)
+                Toggle("", isOn: $hasSchedule)
                     .labelsHidden()
                     .toggleStyle(.switch)
             }
 
-            if hasReminder {
+            if hasSchedule {
                 Divider()
 
-                HStack {
-                    Label("Дата и время", systemImage: "calendar")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Дата")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
 
-                    Spacer()
+                        Button {
+                            isCalendarPresented.toggle()
+                        } label: {
+                            HStack(spacing: 9) {
+                                Image(systemName: "calendar")
+                                    .foregroundStyle(MemoryTheme.accent)
+                                Text(macDateLabel)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(height: 36)
+                            .background(Color.primary.opacity(0.045))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $isCalendarPresented, arrowEdge: .bottom) {
+                            DatePicker(
+                                "Дата",
+                                selection: $scheduledDate,
+                                displayedComponents: .date
+                            )
+                            .datePickerStyle(.graphical)
+                            .labelsHidden()
+                            .environment(\.locale, Locale(identifier: "ru_RU"))
+                            .padding(16)
+                            .frame(width: 300)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    DatePicker(
-                        "Дата и время",
-                        selection: $reminderDate,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
-                    .labelsHidden()
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Время")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 9) {
+                            Image(systemName: "clock")
+                                .foregroundStyle(MemoryTheme.accent)
+
+                            DatePicker(
+                                "Время",
+                                selection: $scheduledDate,
+                                displayedComponents: .hourAndMinute
+                            )
+                            .labelsHidden()
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 36)
+                        .background(Color.primary.opacity(0.045))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                        }
+                    }
+                    .frame(width: 150, alignment: .leading)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(18)
         .memoryCard()
-        .animation(.easeInOut(duration: 0.18), value: hasReminder)
+        .animation(.easeInOut(duration: 0.18), value: hasSchedule)
+        .onChange(of: hasSchedule) { _, isScheduled in
+            if !isScheduled { notificationsEnabled = false }
+        }
+    }
+
+    private var macNotificationCard: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(MemoryTheme.accent.opacity(0.13))
+                    .frame(width: 34, height: 34)
+
+                Image(systemName: notificationsEnabled ? "bell.fill" : "bell.slash")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(MemoryTheme.accent)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Уведомление")
+                    .font(.body.weight(.medium))
+                Text(notificationSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $notificationsEnabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(!hasSchedule)
+        }
+        .padding(18)
+        .memoryCard()
     }
 
     private var macFooter: some View {
@@ -223,12 +337,42 @@ struct ItemEditorView: View {
 
     private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    private var scheduleSummary: String {
+#if os(macOS)
+        "\(macDateLabel) · \(scheduledDate.formatted(date: .omitted, time: .shortened))"
+#else
+        scheduledDate.formatted(date: .abbreviated, time: .shortened)
+#endif
+    }
+
+#if os(macOS)
+    private var macDateLabel: String {
+        Self.macDateFormatter.string(from: scheduledDate)
+    }
+
+    private static let macDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "d MMMM yyyy"
+        return formatter
+    }()
+#endif
+
+    private var notificationSummary: String {
+        guard hasSchedule else { return "Сначала добавьте дату и время" }
+        return notificationsEnabled ? "Придёт в указанное время" : "Задача останется в плане без сигнала"
+    }
+
     private func saveAndDismiss() {
-        onSave(trimmedTitle, hasReminder ? reminderDate : nil)
+        onSave(
+            trimmedTitle,
+            hasSchedule ? scheduledDate : nil,
+            hasSchedule && notificationsEnabled
+        )
         dismiss()
     }
 
-    private static var defaultReminderDate: Date {
+    private static var defaultScheduledDate: Date {
         let calendar = Calendar.current
         guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: .now) else { return .now.addingTimeInterval(3600) }
         return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow

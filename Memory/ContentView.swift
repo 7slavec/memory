@@ -60,7 +60,14 @@ struct ContentView: View {
         .sheet(item: $editingItem) { item in
             ItemEditorView(
                 item: item,
-                onSave: { title, date in update(item, title: title, dueDate: date) },
+                onSave: { title, date, notificationsEnabled in
+                    update(
+                        item,
+                        title: title,
+                        dueDate: date,
+                        notificationsEnabled: notificationsEnabled
+                    )
+                },
                 onDelete: { delete(item) }
             )
         }
@@ -256,15 +263,25 @@ struct ContentView: View {
     }
 
     private func addItem(title: String, dueDate: Date?) {
-        let item = Item(title: title, dueDate: dueDate)
+        let item = Item(
+            title: title,
+            dueDate: dueDate,
+            notificationsEnabled: dueDate != nil
+        )
         withAnimation(.snappy) { modelContext.insert(item) }
         guard saveChanges() else { return }
         scheduleReminder(for: item)
     }
 
-    private func update(_ item: Item, title: String, dueDate: Date?) {
+    private func update(
+        _ item: Item,
+        title: String,
+        dueDate: Date?,
+        notificationsEnabled: Bool
+    ) {
         item.title = title
         item.dueDate = dueDate
+        item.notificationsEnabled = dueDate != nil && notificationsEnabled
         item.updatedAt = .now
         guard saveChanges() else { return }
         scheduleReminder(for: item)
@@ -295,7 +312,9 @@ struct ContentView: View {
     }
 
     private func scheduleReminder(for item: Item) {
-        guard !item.isCompleted, let date = item.dueDate else {
+        guard !item.isCompleted,
+              item.notificationsEnabled,
+              let date = item.dueDate else {
             ReminderScheduler.cancel(id: item.id)
             return
         }
@@ -452,7 +471,11 @@ private struct MemoryItemRow: View {
         if Calendar.current.isDateInTomorrow(date) { return "Завтра · \(date.formatted(date: .omitted, time: .shortened))" }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
-    private var dateIcon: String { item.isCompleted ? "checkmark" : item.dueDate == nil ? "tray" : "bell" }
+    private var dateIcon: String {
+        if item.isCompleted { return "checkmark" }
+        guard item.dueDate != nil else { return "tray" }
+        return item.notificationsEnabled ? "bell" : "calendar"
+    }
     private var dateColor: Color {
         guard !item.isCompleted, let date = item.dueDate else { return .secondary }
         return date < .now ? .red : MemoryTheme.accent

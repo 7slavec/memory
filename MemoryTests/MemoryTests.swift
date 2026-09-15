@@ -41,6 +41,7 @@ struct MemoryTests {
         let reminderDate = Date.now.addingTimeInterval(3600)
         let item = Item(title: "Позвонить", dueDate: reminderDate)
         #expect(item.dueDate == reminderDate)
+        #expect(item.notificationsEnabled)
         #expect(item.completedAt == nil)
         item.setCompleted(true)
         #expect(item.isCompleted)
@@ -48,6 +49,18 @@ struct MemoryTests {
         item.setCompleted(false)
         #expect(!item.isCompleted)
         #expect(item.completedAt == nil)
+    }
+
+    @Test func scheduledItemCanStaySilent() {
+        let scheduledDate = Date.now.addingTimeInterval(7200)
+        let item = Item(
+            title: "Посмотреть запись",
+            dueDate: scheduledDate,
+            notificationsEnabled: false
+        )
+
+        #expect(item.dueDate == scheduledDate)
+        #expect(!item.notificationsEnabled)
     }
 
 }

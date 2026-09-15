@@ -15,6 +15,7 @@ final class Item {
     var timestamp: Date = Date.now
     var isCompleted: Bool = false
     var dueDate: Date?
+    var notificationEnabled: Bool?
     var completedAt: Date?
     var updatedAt: Date = Date.now
 
@@ -22,13 +23,15 @@ final class Item {
         title: String,
         timestamp: Date = .now,
         isCompleted: Bool = false,
-        dueDate: Date? = nil
+        dueDate: Date? = nil,
+        notificationsEnabled: Bool? = nil
     ) {
         self.id = UUID()
         self.title = title
         self.timestamp = timestamp
         self.isCompleted = isCompleted
         self.dueDate = dueDate
+        self.notificationEnabled = notificationsEnabled ?? (dueDate != nil)
         self.completedAt = isCompleted ? .now : nil
         self.updatedAt = .now
     }
@@ -37,5 +40,12 @@ final class Item {
         isCompleted = completed
         completedAt = completed ? .now : nil
         updatedAt = .now
+    }
+}
+
+extension Item {
+    var notificationsEnabled: Bool {
+        get { notificationEnabled ?? (dueDate != nil) }
+        set { notificationEnabled = newValue }
     }
 }
