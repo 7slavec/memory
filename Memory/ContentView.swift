@@ -10,67 +10,158 @@ import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @Query(sort: \Item.timestamp, order: .reverse) private var items: [Item]
+
+    @State private var draft = ""
+    @State private var errorMessage: String?
+    @FocusState private var isInputFocused: Bool
 
     var body: some View {
-        NavigationViewWrapper {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+        NavigationStack {
+            VStack(spacing: 0) {
+                captureBar
+
+                if items.isEmpty {
+                    ContentUnavailableView(
+                        "Пока пусто",
+                        systemImage: "checklist",
+                        description: Text("Добавьте первую задачу выше")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List {
+                        ForEach(items) { item in
+                            itemRow(item)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        delete(item)
+                                    } label: {
+                                        Label("Удалить", systemImage: "trash")
+                                    }
+                                }
+                        }
+                        .onDelete(perform: deleteItems)
                     }
+                    .listStyle(.plain)
                 }
-                .onDelete(perform: deleteItems)
             }
-#if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
+            .navigationTitle("Memory")
             .toolbar {
 #if os(iOS)
                 ToolbarItem(placement: .navigationBarTrailing) {
                     EditButton()
                 }
 #endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
+            }
+            .alert("Не удалось сохранить", isPresented: isShowingError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "Неизвестная ошибка")
             }
         }
     }
 
+    private var captureBar: some View {
+        HStack(spacing: 12) {
+            TextField("Что нужно запомнить?", text: $draft)
+                .textFieldStyle(.roundedBorder)
+                .focused($isInputFocused)
+                .onSubmit(addItem)
+
+            Button(action: addItem) {
+                Image(systemName: "plus")
+                    .font(.headline)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(trimmedDraft.isEmpty)
+            .accessibilityLabel("Добавить задачу")
+        }
+        .padding()
+    }
+
+    private func itemRow(_ item: Item) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                toggleCompleted(item)
+            } label: {
+                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(item.isCompleted ? Color.accentColor : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(item.isCompleted ? "Отметить невыполненной" : "Отметить выполненной")
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.title.isEmpty ? "Без названия" : item.title)
+                    .strikethrough(item.isCompleted)
+                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
+
+                Text(item.timestamp, format: .dateTime.day().month().hour().minute())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private var trimmedDraft: String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isShowingError: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
+    }
+
     private func addItem() {
+        let title = trimmedDraft
+        guard !title.isEmpty else { return }
+
         withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
+            modelContext.insert(Item(title: title))
+            draft = ""
+            saveChanges()
+        }
+
+        isInputFocused = true
+    }
+
+    private func toggleCompleted(_ item: Item) {
+        withAnimation {
+            item.isCompleted.toggle()
+            saveChanges()
         }
     }
 
     private func deleteItems(offsets: IndexSet) {
+        let itemsToDelete = offsets.map { items[$0] }
+
         withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
+            itemsToDelete.forEach(modelContext.delete)
+            saveChanges()
         }
     }
-}
 
-fileprivate struct NavigationViewWrapper<Content: View>: View {
-    let content: () -> Content
-
-    var body: some View {
-#if os(macOS)
-        NavigationSplitView {
-            content()
-        } detail: {
-            Text("Select an item")
+    private func delete(_ item: Item) {
+        withAnimation {
+            modelContext.delete(item)
+            saveChanges()
         }
-#else
-        content()
-#endif
+    }
+
+    private func saveChanges() {
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
