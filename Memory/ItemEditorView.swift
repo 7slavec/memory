@@ -39,19 +39,46 @@ struct ItemEditorView: View {
             .navigationBarTitleDisplayMode(.inline)
 #endif
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+#if os(iOS)
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Отмена")
+#else
+                    Button("Отмена") { dismiss() }
+#endif
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Гото") { onSave(trimmedTitle, hasReminder ? reminderDate : nil); dismiss() }
-                        .fontWeight(.semibold).disabled(trimmedTitle.isEmpty)
+#if os(iOS)
+                    Button {
+                        saveAndDismiss()
+                    } label: {
+                        Image(systemName: "checkmark")
+                    }
+                    .accessibilityLabel("Сохранить")
+                    .disabled(trimmedTitle.isEmpty)
+#else
+                    Button("Сохранить") { saveAndDismiss() }
+                        .disabled(trimmedTitle.isEmpty)
+#endif
                 }
             }
         }
+#if os(iOS)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+#endif
 #if os(macOS)
         .frame(minWidth: 470, minHeight: 360)
 #endif
     }
 
     private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func saveAndDismiss() {
+        onSave(trimmedTitle, hasReminder ? reminderDate : nil)
+        dismiss()
+    }
+
     private static var defaultReminderDate: Date {
         let calendar = Calendar.current
         guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: .now) else { return .now.addingTimeInterval(3600) }

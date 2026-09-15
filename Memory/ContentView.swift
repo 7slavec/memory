@@ -149,7 +149,11 @@ struct ContentView: View {
             LazyVStack(alignment: .leading, spacing: 18) {
                 pageHeader
                 if selectedSection == .now || selectedSection == .inbox {
-                    QuickCaptureCard(onAdd: addItem)
+                    QuickCaptureCard(
+                        defaultPreset: selectedSection == .now ? .today : .none,
+                        onAdd: addItem
+                    )
+                    .id(selectedSection)
                 }
                 if selectedSection == .search { searchField }
                 if selectedSection == .now, !activeItems.isEmpty { overview }
@@ -211,7 +215,7 @@ struct ContentView: View {
         }
     }
 
-    private var activeItems: [Item] { sorted(items.filter { !$0.isCompleted }) }
+    private var activeItems: [Item] { sorted(items.filter { !$0.isCompleted && $0.dueDate != nil }) }
     private var inboxItems: [Item] { sorted(items.filter { !$0.isCompleted && $0.dueDate == nil }) }
     private var completedItems: [Item] {
         items.filter(\.isCompleted).sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
@@ -342,9 +346,16 @@ private enum QuickDuePreset: String, CaseIterable, Identifiable {
 
 private struct QuickCaptureCard: View {
     @State private var draft = ""
-    @State private var preset: QuickDuePreset = .none
+    @State private var preset: QuickDuePreset
     @FocusState private var isFocused: Bool
+    let defaultPreset: QuickDuePreset
     let onAdd: (String, Date?) -> Void
+
+    init(defaultPreset: QuickDuePreset, onAdd: @escaping (String, Date?) -> Void) {
+        _preset = State(initialValue: defaultPreset)
+        self.defaultPreset = defaultPreset
+        self.onAdd = onAdd
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -382,20 +393,6 @@ private struct QuickCaptureCard: View {
             }
         }
         .padding(18).memoryCard()
-#if os(iOS)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Button("Отмена") {
-                    draft = ""
-                    isFocused = false
-                }
-                Spacer()
-                Text("«Готово» добавит задачу")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-#endif
     }
 
     private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -403,8 +400,8 @@ private struct QuickCaptureCard: View {
         guard !trimmedDraft.isEmpty else { return }
         onAdd(trimmedDraft, preset.date)
         draft = ""
-        preset = .none
-        isFocused = true
+        preset = defaultPreset
+        isFocused = false
     }
 }
 
