@@ -10,6 +10,8 @@ import SwiftData
 
 @main
 struct MemoryApp: App {
+    @StateObject private var account = AccountSyncController()
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,
@@ -26,6 +28,7 @@ struct MemoryApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(account)
         }
         .modelContainer(sharedModelContainer)
     }

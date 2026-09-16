@@ -63,6 +63,37 @@ struct MemoryTests {
         #expect(!item.notificationsEnabled)
     }
 
+    @Test func remoteTaskRoundTripKeepsSyncFields() throws {
+        let ownerID = UUID()
+        let dueDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let item = Item(
+            title: "Общая проверка",
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            dueDate: dueDate,
+            notificationsEnabled: false,
+            ownerID: ownerID.uuidString.lowercased(),
+            updatedAt: Date(timeIntervalSince1970: 1_750_000_000)
+        )
+
+        let restored = RemoteTask(item: item, userID: ownerID).makeLocalItem()
+
+        #expect(restored.id == item.id)
+        #expect(restored.ownerID == ownerID.uuidString.lowercased())
+        #expect(restored.title == item.title)
+        #expect(restored.dueDate == dueDate)
+        #expect(!restored.notificationsEnabled)
+        #expect(restored.updatedAt == item.updatedAt)
+    }
+
+    @Test func deletedItemBecomesSyncableTombstone() {
+        let item = Item(title: "Удалить после синхронизации")
+
+        item.markDeleted()
+
+        #expect(item.deletedAt != nil)
+        #expect(item.updatedAt == item.deletedAt)
+    }
+
     @Test func smartInputUnderstandsTomorrowAndTime() throws {
         let calendar = testCalendar
         let now = makeDate(2026, 9, 15, 12, 0, calendar: calendar)

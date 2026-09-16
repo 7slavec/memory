@@ -38,10 +38,13 @@ enum MemorySection: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var account: AccountSyncController
     @Query(sort: \Item.timestamp, order: .reverse) private var items: [Item]
     @State private var selectedSection: MemorySection = .now
     @State private var searchText = ""
     @State private var editingItem: Item?
+    @State private var isAccountPresented = false
     @State private var errorMessage: String?
 #if os(iOS)
     @State private var isKeyboardVisible = false
@@ -56,7 +59,15 @@ struct ContentView: View {
 #endif
         }
         .tint(MemoryTheme.accent)
-        .task { repairDuplicateIdentifiers() }
+        .task {
+            repairDuplicateIdentifiers()
+            await account.restoreSession()
+            await synchronize()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await synchronize() }
+        }
         .sheet(item: $editingItem) { item in
             ItemEditorView(
                 item: item,
@@ -70,6 +81,10 @@ struct ContentView: View {
                 },
                 onDelete: { delete(item) }
             )
+        }
+        .sheet(isPresented: $isAccountPresented) {
+            AccountView()
+                .environmentObject(account)
         }
         .alert("Нужно внимание", isPresented: isShowingError) {
             Button("OK", role: .cancel) {}
@@ -102,6 +117,26 @@ struct ContentView: View {
                     Label(section.title, systemImage: section.icon).tag(section)
                 }
                 .listStyle(.sidebar)
+                Button {
+                    isAccountPresented = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: account.isSignedIn ? "checkmark.icloud.fill" : "person.crop.circle")
+                            .foregroundStyle(MemoryTheme.accent)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(account.email ?? "Аккаунт")
+                                .lineLimit(1)
+                            Text(account.statusText)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(16)
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 230)
         } detail: {
@@ -177,9 +212,26 @@ struct ContentView: View {
     }
 
     private var pageHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(selectedSection.title).font(.system(size: 34, weight: .bold, design: .rounded))
-            Text(selectedSection.subtitle).font(.subheadline).foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(selectedSection.title).font(.system(size: 34, weight: .bold, design: .rounded))
+                Text(selectedSection.subtitle).font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer()
+#if os(iOS)
+            Button {
+                isAccountPresented = true
+            } label: {
+                Image(systemName: account.isSignedIn ? "checkmark.icloud.fill" : "person.crop.circle")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(MemoryTheme.accent)
+                    .frame(width: 40, height: 40)
+                    .background(MemoryTheme.accent.opacity(0.1))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Аккаунт и синхронизация")
+#endif
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -222,10 +274,14 @@ struct ContentView: View {
         }
     }
 
-    private var activeItems: [Item] { sorted(items.filter { !$0.isCompleted && $0.dueDate != nil }) }
-    private var inboxItems: [Item] { sorted(items.filter { !$0.isCompleted && $0.dueDate == nil }) }
+    private var accountItems: [Item] {
+        items.filter { $0.deletedAt == nil && $0.ownerID == account.userID }
+    }
+
+    private var activeItems: [Item] { sorted(accountItems.filter { !$0.isCompleted && $0.dueDate != nil }) }
+    private var inboxItems: [Item] { sorted(accountItems.filter { !$0.isCompleted && $0.dueDate == nil }) }
     private var completedItems: [Item] {
-        items.filter(\.isCompleted).sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
+        accountItems.filter(\.isCompleted).sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
     }
 
     private var visibleItems: [Item] {
@@ -235,8 +291,8 @@ struct ContentView: View {
         case .completed: completedItems
         case .search:
             searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? items.sorted { $0.updatedAt > $1.updatedAt }
-                : items.filter { $0.title.localizedCaseInsensitiveContains(searchText) }.sorted { $0.updatedAt > $1.updatedAt }
+                ? accountItems.sorted { $0.updatedAt > $1.updatedAt }
+                : accountItems.filter { $0.title.localizedCaseInsensitiveContains(searchText) }.sorted { $0.updatedAt > $1.updatedAt }
         }
     }
 
@@ -266,11 +322,13 @@ struct ContentView: View {
         let item = Item(
             title: title,
             dueDate: dueDate,
-            notificationsEnabled: dueDate != nil
+            notificationsEnabled: dueDate != nil,
+            ownerID: account.userID
         )
         withAnimation(.snappy) { modelContext.insert(item) }
         guard saveChanges() else { return }
         scheduleReminder(for: item)
+        account.markLocalChange(modelContext: modelContext)
     }
 
     private func update(
@@ -285,19 +343,22 @@ struct ContentView: View {
         item.updatedAt = .now
         guard saveChanges() else { return }
         scheduleReminder(for: item)
+        account.markLocalChange(modelContext: modelContext)
     }
 
     private func toggleCompleted(_ item: Item) {
         withAnimation(.snappy) { item.setCompleted(!item.isCompleted) }
         guard saveChanges() else { return }
         item.isCompleted ? ReminderScheduler.cancel(id: item.id) : scheduleReminder(for: item)
+        account.markLocalChange(modelContext: modelContext)
     }
 
     private func delete(_ item: Item) {
         let id = item.id
-        withAnimation(.snappy) { modelContext.delete(item) }
+        withAnimation(.snappy) { item.markDeleted() }
         guard saveChanges() else { return }
         ReminderScheduler.cancel(id: id)
+        account.markLocalChange(modelContext: modelContext)
     }
 
     @discardableResult private func saveChanges() -> Bool {
@@ -340,6 +401,13 @@ struct ContentView: View {
         }
 
         if changed { _ = saveChanges() }
+    }
+
+    private func synchronize() async {
+        await account.synchronize(modelContext: modelContext)
+        for item in accountItems {
+            scheduleReminder(for: item)
+        }
     }
 }
 
@@ -670,5 +738,7 @@ private struct EmptyMemoryView: View {
 }
 
 #Preview {
-    ContentView().modelContainer(for: Item.self, inMemory: true)
+    ContentView()
+        .modelContainer(for: Item.self, inMemory: true)
+        .environmentObject(AccountSyncController())
 }
