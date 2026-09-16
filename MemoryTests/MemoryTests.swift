@@ -85,6 +85,22 @@ struct MemoryTests {
         #expect(restored.updatedAt == item.updatedAt)
     }
 
+    @Test func syncIgnoresSubMillisecondTimestampRoundTripDifferences() throws {
+        let localDate = Date(timeIntervalSince1970: 1_750_000_000.123456)
+        let remoteDate = try #require(
+            SupabaseDate.date(SupabaseDate.string(localDate))
+        )
+
+        #expect(!SupabaseDate.isMeaningfullyNewer(localDate, than: remoteDate))
+        #expect(!SupabaseDate.isMeaningfullyNewer(remoteDate, than: localDate))
+        #expect(
+            SupabaseDate.isMeaningfullyNewer(
+                localDate.addingTimeInterval(1),
+                than: remoteDate
+            )
+        )
+    }
+
     @Test func deletedItemBecomesSyncableTombstone() {
         let item = Item(title: "Удалить после синхронизации")
 

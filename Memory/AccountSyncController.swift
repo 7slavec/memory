@@ -94,7 +94,7 @@ final class AccountSyncController: ObservableObject {
         state = .ready
     }
 
-    func synchronize(modelContext: ModelContext) async {
+    func synchronize(modelContext: ModelContext, showsProgress: Bool = false) async {
         guard let client,
               let userID,
               let userUUID = UUID(uuidString: userID) else { return }
@@ -111,7 +111,9 @@ final class AccountSyncController: ObservableObject {
 
         repeat {
             needsAnotherSynchronization = false
-            state = .syncing
+            if showsProgress {
+                state = .syncing
+            }
 
             do {
                 let remoteItems: [RemoteTask] = try await client
@@ -135,9 +137,9 @@ final class AccountSyncController: ObservableObject {
 
                 for remote in remoteItems {
                     if let local = localByID.removeValue(forKey: remote.id) {
-                        if remote.updatedDate > local.updatedAt {
+                        if SupabaseDate.isMeaningfullyNewer(remote.updatedDate, than: local.updatedAt) {
                             remote.apply(to: local)
-                        } else if local.updatedAt > remote.updatedDate {
+                        } else if SupabaseDate.isMeaningfullyNewer(local.updatedAt, than: remote.updatedDate) {
                             uploads.append(RemoteTask(item: local, userID: userUUID))
                         }
                     } else {

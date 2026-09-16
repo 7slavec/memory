@@ -70,6 +70,10 @@ struct RemoteTask: Codable, Identifiable, Sendable {
 }
 
 enum SupabaseDate {
+    // ISO8601DateFormatter and PostgreSQL can retain different fractions of a millisecond.
+    // Treat that transport-only difference as the same revision to avoid upload loops.
+    nonisolated private static let comparisonTolerance: TimeInterval = 0.002
+
     nonisolated private static func formatter(withFractionalSeconds: Bool) -> ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = withFractionalSeconds
@@ -85,5 +89,9 @@ enum SupabaseDate {
     nonisolated static func date(_ value: String) -> Date? {
         formatter(withFractionalSeconds: true).date(from: value)
             ?? formatter(withFractionalSeconds: false).date(from: value)
+    }
+
+    nonisolated static func isMeaningfullyNewer(_ candidate: Date, than reference: Date) -> Bool {
+        candidate.timeIntervalSince(reference) > comparisonTolerance
     }
 }

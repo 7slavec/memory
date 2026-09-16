@@ -149,7 +149,12 @@ struct AccountView: View {
             .memoryCard()
 
             Button {
-                Task { await account.synchronize(modelContext: modelContext) }
+                Task {
+                    await account.synchronize(
+                        modelContext: modelContext,
+                        showsProgress: true
+                    )
+                }
             } label: {
                 Label("Синхронизировать сейчас", systemImage: "arrow.triangle.2.circlepath")
                     .frame(maxWidth: .infinity)
