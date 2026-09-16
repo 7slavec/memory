@@ -366,6 +366,8 @@ private enum QuickDuePreset: String, CaseIterable, Identifiable {
 private struct QuickCaptureCard: View {
     @State private var draft = ""
     @State private var preset: QuickDuePreset
+    @State private var ignoredSmartExpression: String?
+    @State private var smartResult: ParsedMemoryInput?
     @FocusState private var isFocused: Bool
     let defaultPreset: QuickDuePreset
     let onAdd: (String, Date?) -> Void
@@ -385,6 +387,7 @@ private struct QuickCaptureCard: View {
                 TextField("Что нужно запомнить?", text: $draft)
                     .textFieldStyle(.plain)
                     .focused($isFocused)
+                    .accessibilityIdentifier("quickCaptureField")
                     .onSubmit(submit)
 #if os(iOS)
                     .submitLabel(.done)
@@ -398,28 +401,107 @@ private struct QuickCaptureCard: View {
                 .buttonStyle(.plain).disabled(trimmedDraft.isEmpty)
                 .keyboardShortcut(.return, modifiers: .command)
             }
+
+            if let smartResult {
+                HStack(spacing: 11) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(MemoryTheme.accent)
+                        .frame(width: 28, height: 28)
+                        .background(MemoryTheme.accent.opacity(0.12))
+                        .clipShape(Circle())
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(smartDateLabel(for: smartResult.dueDate))
+                            .font(.caption.weight(.semibold))
+                        if smartResult.title != trimmedDraft {
+                            Text("Сохранится: \(smartResult.title)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer()
+
+                    Button {
+                        ignoredSmartExpression = draft
+                        self.smartResult = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 26, height: 26)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Не распознавать дату")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(MemoryTheme.accent.opacity(0.075))
+                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .accessibilityIdentifier("smartDateSuggestion")
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             Divider().opacity(0.55)
             HStack(spacing: 8) {
                 ForEach(QuickDuePreset.allCases) { option in
-                    Button { preset = option } label: {
+                    Button {
+                        preset = option
+                        ignoredSmartExpression = draft
+                        smartResult = nil
+                    } label: {
                         Label(option.title, systemImage: option.icon)
                             .font(.caption.weight(.medium)).padding(.horizontal, 11).padding(.vertical, 7)
-                            .background(preset == option ? MemoryTheme.accent.opacity(0.13) : Color.secondary.opacity(0.08))
-                            .foregroundStyle(preset == option ? MemoryTheme.accent : Color.secondary).clipShape(Capsule())
+                            .background(isSelected(option) ? MemoryTheme.accent.opacity(0.13) : Color.secondary.opacity(0.08))
+                            .foregroundStyle(isSelected(option) ? MemoryTheme.accent : Color.secondary).clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
         .padding(18).memoryCard()
+        .animation(.easeInOut(duration: 0.18), value: smartResult != nil)
+        .onChange(of: draft) { _, newValue in
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            smartResult = ignoredSmartExpression == newValue
+                ? nil
+                : NaturalLanguageDateParser.parse(trimmed)
+        }
     }
 
     private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func isSelected(_ option: QuickDuePreset) -> Bool {
+        smartResult == nil && preset == option
+    }
+
+    private func smartDateLabel(for date: Date) -> String {
+        let calendar = Calendar.current
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if calendar.isDateInToday(date) { return "Сегодня · \(time)" }
+        if calendar.isDateInTomorrow(date) { return "Завтра · \(time)" }
+        return Self.smartDateFormatter.string(from: date)
+    }
+
+    private static let smartDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "d MMM, HH:mm"
+        return formatter
+    }()
+
     private func submit() {
         guard !trimmedDraft.isEmpty else { return }
-        onAdd(trimmedDraft, preset.date)
+        if let smartResult {
+            onAdd(smartResult.title, smartResult.dueDate)
+        } else {
+            onAdd(trimmedDraft, preset.date)
+        }
         draft = ""
         preset = defaultPreset
+        ignoredSmartExpression = nil
         isFocused = false
     }
 }
