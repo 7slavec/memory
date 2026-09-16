@@ -364,6 +364,7 @@ private enum QuickDuePreset: String, CaseIterable, Identifiable {
 }
 
 private struct QuickCaptureCard: View {
+    @StateObject private var voiceInput = VoiceInputController()
     @State private var draft = ""
     @State private var preset: QuickDuePreset
     @State private var ignoredSmartExpression: String?
@@ -393,6 +394,24 @@ private struct QuickCaptureCard: View {
                     .submitLabel(.done)
                     .textInputAutocapitalization(.sentences)
 #endif
+                Button {
+                    isFocused = false
+                    Task { await voiceInput.toggle(currentText: draft) }
+                } label: {
+                    Image(systemName: voiceInput.isListening ? "stop.fill" : "mic.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(voiceInput.isListening ? Color.white : MemoryTheme.accent)
+                        .frame(width: 34, height: 34)
+                        .background(
+                            voiceInput.isListening
+                                ? Color.red.opacity(0.88)
+                                : MemoryTheme.accent.opacity(0.12)
+                        )
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(voiceInput.isListening ? "Остановить запись" : "Голосовой ввод")
+
                 Button(action: submit) {
                     Image(systemName: "arrow.up").font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
                         .frame(width: 34, height: 34)
@@ -400,6 +419,27 @@ private struct QuickCaptureCard: View {
                 }
                 .buttonStyle(.plain).disabled(trimmedDraft.isEmpty)
                 .keyboardShortcut(.return, modifiers: .command)
+            }
+
+            if voiceInput.isListening {
+                HStack(spacing: 9) {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 8, height: 8)
+                    Text("Слушаю… Говорите задачу целиком")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Готово") { voiceInput.stop() }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(MemoryTheme.accent)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Color.red.opacity(0.07))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             if let smartResult {
@@ -463,15 +503,34 @@ private struct QuickCaptureCard: View {
         }
         .padding(18).memoryCard()
         .animation(.easeInOut(duration: 0.18), value: smartResult != nil)
+        .animation(.easeInOut(duration: 0.18), value: voiceInput.isListening)
         .onChange(of: draft) { _, newValue in
             let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
             smartResult = ignoredSmartExpression == newValue
                 ? nil
                 : NaturalLanguageDateParser.parse(trimmed)
         }
+        .onChange(of: voiceInput.transcript) { _, newValue in
+            guard !newValue.isEmpty else { return }
+            ignoredSmartExpression = nil
+            draft = newValue
+        }
+        .onDisappear { voiceInput.stop() }
+        .alert("Голосовой ввод", isPresented: isShowingVoiceError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(voiceInput.errorMessage ?? "Не удалось распознать речь.")
+        }
     }
 
     private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var isShowingVoiceError: Binding<Bool> {
+        Binding(
+            get: { voiceInput.errorMessage != nil },
+            set: { if !$0 { voiceInput.errorMessage = nil } }
+        )
+    }
 
     private func isSelected(_ option: QuickDuePreset) -> Bool {
         smartResult == nil && preset == option
@@ -494,6 +553,7 @@ private struct QuickCaptureCard: View {
 
     private func submit() {
         guard !trimmedDraft.isEmpty else { return }
+        voiceInput.stop()
         if let smartResult {
             onAdd(smartResult.title, smartResult.dueDate)
         } else {
