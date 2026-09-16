@@ -207,6 +207,66 @@ struct MemoryTests {
         #expect(result.dueDate == makeDate(2026, 9, 16, 10, 0, calendar: calendar))
     }
 
+    @Test func smartInputUnderstandsJoinedHalfHour() throws {
+        let calendar = testCalendar
+        let now = makeDate(2026, 9, 15, 8, 0, calendar: calendar)
+        let result = try #require(
+            NaturalLanguageDateParser.parse(
+                "Проверить почту в полдесятого",
+                now: now,
+                calendar: calendar
+            )
+        )
+
+        #expect(result.title == "Проверить почту")
+        #expect(result.dueDate == makeDate(2026, 9, 15, 9, 30, calendar: calendar))
+    }
+
+    @Test func smartInputUnderstandsHalfHourAtNight() throws {
+        let calendar = testCalendar
+        let now = makeDate(2026, 9, 15, 12, 0, calendar: calendar)
+        let result = try #require(
+            NaturalLanguageDateParser.parse(
+                "Позвонить завтра в пол одиннадцатого ночи",
+                now: now,
+                calendar: calendar
+            )
+        )
+
+        #expect(result.title == "Позвонить")
+        #expect(result.dueDate == makeDate(2026, 9, 16, 22, 30, calendar: calendar))
+    }
+
+    @Test func smartInputUnderstandsConversationalHalfHour() throws {
+        let calendar = testCalendar
+        let now = makeDate(2026, 9, 15, 12, 0, calendar: calendar)
+        let result = try #require(
+            NaturalLanguageDateParser.parse(
+                "Фильм завтра пол восьмом вечером",
+                now: now,
+                calendar: calendar
+            )
+        )
+
+        #expect(result.title == "Фильм")
+        #expect(result.dueDate == makeDate(2026, 9, 16, 19, 30, calendar: calendar))
+    }
+
+    @Test func smartInputUnderstandsSpacedNumericHalfHour() throws {
+        let calendar = testCalendar
+        let now = makeDate(2026, 9, 15, 12, 0, calendar: calendar)
+        let result = try #require(
+            NaturalLanguageDateParser.parse(
+                "Проверить сервер завтра в пол 1 1 ночи",
+                now: now,
+                calendar: calendar
+            )
+        )
+
+        #expect(result.title == "Проверить сервер")
+        #expect(result.dueDate == makeDate(2026, 9, 16, 22, 30, calendar: calendar))
+    }
+
     @Test func smartInputIgnoresTextWithoutDate() {
         let calendar = testCalendar
         let now = makeDate(2026, 9, 15, 12, 0, calendar: calendar)

@@ -170,7 +170,22 @@ enum NaturalLanguageDateParser {
     }
 
     private static func parseTime(in text: String) -> TimeMatch? {
-        let hourWithDayPartPattern = #"\b(?:в\s+)?(1[0-2]|[1-9]|час|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)(?::([0-5]\d))?(?:\s*час(?:а|ов)?)?\s+(утра|дня|вечера|ночи)\b"#
+        let halfHourPattern = #"\b(?:в\s+)?пол\s*(1\s+[0-2]|1[0-2]|[1-9]|первого|первом|второго|втором|третьего|третьем|четвертого|четвертом|пятого|пятом|шестого|шестом|седьмого|седьмом|восьмого|восьмом|девятого|девятом|десятого|десятом|одиннадцатого|одиннадцатом|двенадцатого|двенадцатом)(?:\s+(утра|утром|дня|днем|вечера|вечером|ночи|ночью))?\b"#
+        if let match = firstMatch(pattern: halfHourPattern, in: text),
+           let targetHourRange = Range(match.range(at: 1), in: text),
+           let targetHour = halfHourTargetValue(for: String(text[targetHourRange])) {
+            let precedingHour = targetHour == 1 ? 0 : targetHour - 1
+            let resolvedHour: Int
+            if match.range(at: 2).location != NSNotFound,
+               let dayPartRange = Range(match.range(at: 2), in: text) {
+                resolvedHour = hourAdjusted(precedingHour, for: String(text[dayPartRange]))
+            } else {
+                resolvedHour = precedingHour
+            }
+            return TimeMatch(hour: resolvedHour, minute: 30, range: match.range)
+        }
+
+        let hourWithDayPartPattern = #"\b(?:в\s+)?(1[0-2]|[1-9]|час|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)(?::([0-5]\d))?(?:\s*час(?:а|ов)?)?\s+(утра|утром|дня|днем|вечера|вечером|ночи|ночью)\b"#
         if let match = firstMatch(pattern: hourWithDayPartPattern, in: text),
            let hourRange = Range(match.range(at: 1), in: text),
            let hour = hourValue(for: String(text[hourRange])),
@@ -254,16 +269,46 @@ enum NaturalLanguageDateParser {
         }
     }
 
+    private static func halfHourTargetValue(for token: String) -> Int? {
+        let normalizedToken = token.replacingOccurrences(of: " ", with: "")
+        if let numericHour = Int(normalizedToken), (1...12).contains(numericHour) {
+            return numericHour
+        }
+
+        switch normalizedToken {
+        case "первого", "первом": return 1
+        case "второго", "втором": return 2
+        case "третьего", "третьем": return 3
+        case "четвертого", "четвертом": return 4
+        case "пятого", "пятом": return 5
+        case "шестого", "шестом": return 6
+        case "седьмого", "седьмом": return 7
+        case "восьмого", "восьмом": return 8
+        case "девятого", "девятом": return 9
+        case "десятого", "десятом": return 10
+        case "одиннадцатого", "одиннадцатом": return 11
+        case "двенадцатого", "двенадцатом": return 12
+        default: return nil
+        }
+    }
+
     private static func hourAdjusted(_ hour: Int, for dayPart: String) -> Int {
-        switch dayPart {
-        case "дня", "вечера":
+        switch canonicalDayPart(dayPart) {
+        case "day", "evening":
             return hour == 12 ? 12 : hour + 12
-        case "ночи":
+        case "night":
             if hour == 12 { return 0 }
             return hour <= 5 ? hour : hour + 12
         default:
             return hour == 12 ? 0 : hour
         }
+    }
+
+    private static func canonicalDayPart(_ value: String) -> String {
+        if value.hasPrefix("дн") { return "day" }
+        if value.hasPrefix("вечер") { return "evening" }
+        if value.hasPrefix("ноч") { return "night" }
+        return "morning"
     }
 
     private static func firstMatch(pattern: String, in text: String) -> NSTextCheckingResult? {
