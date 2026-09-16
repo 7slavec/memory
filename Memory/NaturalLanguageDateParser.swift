@@ -170,6 +170,27 @@ enum NaturalLanguageDateParser {
     }
 
     private static func parseTime(in text: String) -> TimeMatch? {
+        let hourWithDayPartPattern = #"\b(?:в\s+)?(1[0-2]|[1-9]|час|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)(?::([0-5]\d))?(?:\s*час(?:а|ов)?)?\s+(утра|дня|вечера|ночи)\b"#
+        if let match = firstMatch(pattern: hourWithDayPartPattern, in: text),
+           let hourRange = Range(match.range(at: 1), in: text),
+           let hour = hourValue(for: String(text[hourRange])),
+           let dayPartRange = Range(match.range(at: 3), in: text) {
+            let minute: Int
+            if match.range(at: 2).location != NSNotFound,
+               let minuteRange = Range(match.range(at: 2), in: text) {
+                minute = Int(text[minuteRange]) ?? 0
+            } else {
+                minute = 0
+            }
+
+            let dayPart = String(text[dayPartRange])
+            return TimeMatch(
+                hour: hourAdjusted(hour, for: dayPart),
+                minute: minute,
+                range: match.range
+            )
+        }
+
         let numericPatterns = [
             #"\b(?:в\s+)?([01]?\d|2[0-3])[:.]([0-5]\d)\b"#,
             #"\bв\s+([01]?\d|2[0-3])(?:\s*час(?:а|ов)?)?\b"#
@@ -190,6 +211,13 @@ enum NaturalLanguageDateParser {
             return TimeMatch(hour: hour, minute: minute, range: match.range)
         }
 
+        let spokenHourPattern = #"\bв\s+(час|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)(?:\s*час(?:а|ов)?)?\b"#
+        if let match = firstMatch(pattern: spokenHourPattern, in: text),
+           let hourRange = Range(match.range(at: 1), in: text),
+           let hour = hourValue(for: String(text[hourRange])) {
+            return TimeMatch(hour: hour, minute: 0, range: match.range)
+        }
+
         let dayParts: [(pattern: String, hour: Int)] = [
             (#"\bутром\b"#, 9),
             (#"\bднем\b"#, 14),
@@ -202,6 +230,40 @@ enum NaturalLanguageDateParser {
             }
         }
         return nil
+    }
+
+    private static func hourValue(for token: String) -> Int? {
+        if let numericHour = Int(token), (1...12).contains(numericHour) {
+            return numericHour
+        }
+
+        switch token {
+        case "час", "один": return 1
+        case "два": return 2
+        case "три": return 3
+        case "четыре": return 4
+        case "пять": return 5
+        case "шесть": return 6
+        case "семь": return 7
+        case "восемь": return 8
+        case "девять": return 9
+        case "десять": return 10
+        case "одиннадцать": return 11
+        case "двенадцать": return 12
+        default: return nil
+        }
+    }
+
+    private static func hourAdjusted(_ hour: Int, for dayPart: String) -> Int {
+        switch dayPart {
+        case "дня", "вечера":
+            return hour == 12 ? 12 : hour + 12
+        case "ночи":
+            if hour == 12 { return 0 }
+            return hour <= 5 ? hour : hour + 12
+        default:
+            return hour == 12 ? 0 : hour
+        }
     }
 
     private static func firstMatch(pattern: String, in text: String) -> NSTextCheckingResult? {
