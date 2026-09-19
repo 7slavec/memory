@@ -17,6 +17,7 @@ final class AccountSyncController: ObservableObject {
     @Published private(set) var userID: String?
     @Published private(set) var email: String?
     @Published private(set) var state: State
+    @Published private(set) var defaultReminderMinutes: Int
 
     let isConfigured: Bool
     private let client: SupabaseClient?
@@ -26,8 +27,12 @@ final class AccountSyncController: ObservableObject {
     private var realtimeUserID: String?
     private var realtimeListenerTasks: [Task<Void, Never>] = []
     private let deviceID = UUID().uuidString.lowercased()
+    private static let defaultReminderKey = "defaultReminderMinutes"
 
     init() {
+        let storedDefault = UserDefaults.standard.object(forKey: Self.defaultReminderKey) as? Int
+        defaultReminderMinutes = ReminderLeadTime(rawValue: storedDefault ?? 0)?.rawValue ?? 0
+
         if let configuration = SupabaseConfiguration.current {
             client = SupabaseClient(
                 supabaseURL: configuration.url,
@@ -172,6 +177,28 @@ final class AccountSyncController: ObservableObject {
         Task { await synchronize(modelContext: modelContext) }
     }
 
+    func setDefaultReminderMinutes(_ minutes: Int) async throws {
+        guard let normalized = ReminderLeadTime(rawValue: minutes)?.rawValue else { return }
+        let previousValue = defaultReminderMinutes
+
+        defaultReminderMinutes = normalized
+        UserDefaults.standard.set(normalized, forKey: Self.defaultReminderKey)
+
+        guard let client, let userID else { return }
+
+        do {
+            try await client
+                .from("profiles")
+                .update(ProfileSettingsUpdate(defaultReminderMinutes: normalized))
+                .eq("id", value: userID)
+                .execute()
+        } catch {
+            defaultReminderMinutes = previousValue
+            UserDefaults.standard.set(previousValue, forKey: Self.defaultReminderKey)
+            throw error
+        }
+    }
+
     private func setSession(userID: UUID, email: String?) async {
         let nextUserID = userID.uuidString.lowercased()
         if self.userID != nextUserID {
@@ -180,6 +207,26 @@ final class AccountSyncController: ObservableObject {
         self.userID = nextUserID
         self.email = email
         state = .ready
+        await loadProfileSettings(userID: nextUserID)
+    }
+
+    private func loadProfileSettings(userID: String) async {
+        guard let client else { return }
+        do {
+            let settings: ProfileSettings = try await client
+                .from("profiles")
+                .select("default_reminder_minutes")
+                .eq("id", value: userID)
+                .single()
+                .execute()
+                .value
+
+            let normalized = ReminderLeadTime(rawValue: settings.defaultReminderMinutes)?.rawValue ?? 0
+            defaultReminderMinutes = normalized
+            UserDefaults.standard.set(normalized, forKey: Self.defaultReminderKey)
+        } catch {
+            // The local preference remains available while the profile cannot be loaded.
+        }
     }
 
     private func ensureRealtime(
@@ -249,6 +296,22 @@ final class AccountSyncController: ObservableObject {
         if let client, let channel {
             await client.removeChannel(channel)
         }
+    }
+}
+
+private struct ProfileSettings: Decodable {
+    let defaultReminderMinutes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case defaultReminderMinutes = "default_reminder_minutes"
+    }
+}
+
+private struct ProfileSettingsUpdate: Encodable {
+    let defaultReminderMinutes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case defaultReminderMinutes = "default_reminder_minutes"
     }
 }
 

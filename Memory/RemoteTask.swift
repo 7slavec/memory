@@ -4,8 +4,10 @@ struct RemoteTask: Codable, Identifiable, Sendable {
     let id: UUID
     let userID: UUID
     var title: String
+    var details: String?
     var dueAt: String?
     var notificationsEnabled: Bool
+    var reminderOffsets: [Int]
     var isCompleted: Bool
     var completedAt: String?
     var createdAt: String
@@ -16,8 +18,10 @@ struct RemoteTask: Codable, Identifiable, Sendable {
         case id
         case userID = "user_id"
         case title
+        case details
         case dueAt = "due_at"
         case notificationsEnabled = "notifications_enabled"
+        case reminderOffsets = "reminder_offsets"
         case isCompleted = "is_completed"
         case completedAt = "completed_at"
         case createdAt = "created_at"
@@ -29,8 +33,10 @@ struct RemoteTask: Codable, Identifiable, Sendable {
         id = item.id
         self.userID = userID
         title = item.title
+        details = item.details
         dueAt = item.dueDate.map(SupabaseDate.string)
         notificationsEnabled = item.notificationsEnabled
+        reminderOffsets = item.effectiveReminderOffsets
         isCompleted = item.isCompleted
         completedAt = item.completedAt.map(SupabaseDate.string)
         createdAt = SupabaseDate.string(item.timestamp)
@@ -44,10 +50,12 @@ struct RemoteTask: Codable, Identifiable, Sendable {
     func makeLocalItem() -> Item {
         Item(
             title: title,
+            details: details,
             timestamp: createdDate,
             isCompleted: isCompleted,
             dueDate: dueAt.flatMap(SupabaseDate.date),
             notificationsEnabled: notificationsEnabled,
+            reminderOffsets: reminderOffsets,
             ownerID: userID.uuidString.lowercased(),
             id: id,
             completedAt: completedAt.flatMap(SupabaseDate.date),
@@ -58,10 +66,11 @@ struct RemoteTask: Codable, Identifiable, Sendable {
 
     func apply(to item: Item) {
         item.title = title
+        item.details = Item.normalizedDetails(details)
         item.timestamp = createdDate
         item.isCompleted = isCompleted
         item.dueDate = dueAt.flatMap(SupabaseDate.date)
-        item.notificationsEnabled = notificationsEnabled
+        item.setReminderOffsets(notificationsEnabled ? reminderOffsets : [])
         item.completedAt = completedAt.flatMap(SupabaseDate.date)
         item.updatedAt = updatedDate
         item.deletedAt = deletedAt.flatMap(SupabaseDate.date)

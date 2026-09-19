@@ -11,6 +11,7 @@ import SwiftData
 @main
 struct MemoryApp: App {
     @StateObject private var account = AccountSyncController()
+    @AppStorage(AppAppearance.storageKey) private var appAppearance: AppAppearance = .system
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -27,8 +28,15 @@ struct MemoryApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(account)
+            ZStack {
+                MemoryTheme.background
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+
+                ContentView()
+                    .environmentObject(account)
+            }
+            .preferredColorScheme(appAppearance.colorScheme)
         }
         .modelContainer(sharedModelContainer)
     }

@@ -1,5 +1,39 @@
 import SwiftUI
 
+enum AppAppearance: String, CaseIterable, Identifiable {
+    static let storageKey = "norka.appAppearance"
+
+    case system
+    case light
+    case dark
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .system: "Система"
+        case .light: "Светлая"
+        case .dark: "Тёмная"
+        }
+    }
+
+    var details: String {
+        switch self {
+        case .system: "Как на устройстве"
+        case .light: "Всегда светлая"
+        case .dark: "Всегда тёмная"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
+
 enum MemoryTheme {
     static let accent = Color(red: 0.38, green: 0.36, blue: 0.92)
     static let accentSoft = Color(red: 0.88, green: 0.87, blue: 1.0)

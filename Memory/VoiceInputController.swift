@@ -50,11 +50,11 @@ final class VoiceInputController: ObservableObject {
         errorMessage = nil
 
         guard await requestSpeechAuthorization() else {
-            errorMessage = "Разрешите Memory распознавать речь в системных настройках."
+            errorMessage = "Разрешите Norka распознавать речь в системных настройках."
             return
         }
         guard await requestMicrophoneAuthorization() else {
-            errorMessage = "Разрешите Memory доступ к микрофону в системных настройках."
+            errorMessage = "Разрешите Norka доступ к микрофону в системных настройках."
             return
         }
         guard let speechRecognizer, speechRecognizer.isAvailable else {
@@ -64,6 +64,7 @@ final class VoiceInputController: ObservableObject {
 
         stop()
         initialText = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        transcript = initialText
 
         do {
 #if os(iOS)

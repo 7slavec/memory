@@ -1,7 +1,8 @@
-# Подключение Supabase к Memory
+# Подключение Supabase к Norka
 
 1. Создать бесплатный проект на Supabase.
-2. Открыть SQL Editor и выполнить `migrations/001_memory_schema.sql`.
+2. Открыть SQL Editor и выполнить миграции из `supabase/migrations` по порядку.
+   Для уже работающего проекта достаточно выполнять только новые файлы миграций.
 3. В настройках проекта скопировать Project URL и Publishable key.
 4. Скопировать `Memory/SupabaseConfig.example.plist` в
    `Memory/SupabaseConfig.plist` и заменить в копии `SUPABASE_URL` и

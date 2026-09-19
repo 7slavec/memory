@@ -1,31 +1,53 @@
 import SwiftUI
 
+#if os(iOS)
+private enum MobileEditorField: Hashable {
+    case title
+    case details
+}
+#endif
+
 struct ItemEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var account: AccountSyncController
+    @AppStorage(ReminderScheduler.applicationNotificationsEnabledKey)
+    private var applicationNotificationsEnabled = true
     let item: Item
-    let onSave: (String, Date?, Bool) -> Void
+    let onSave: (String, String?, Date?, [Int]) -> Void
+    let onToggleCompleted: () -> Void
     let onDelete: () -> Void
     @State private var title: String
+    @State private var details: String
+    @State private var isDescriptionPresented: Bool
     @State private var hasSchedule: Bool
     @State private var scheduledDate: Date
-    @State private var notificationsEnabled: Bool
+    @State private var reminderOffsets: Set<Int>
+    @State private var isDeleteConfirmationPresented = false
+    @State private var isDiscardConfirmationPresented = false
 #if os(macOS)
     @State private var isCalendarPresented = false
     @State private var isTimePickerPresented = false
+#else
+    @State private var isMobileEditorAtTop = true
+    @FocusState private var mobileFocusedField: MobileEditorField?
 #endif
 
     init(
         item: Item,
-        onSave: @escaping (String, Date?, Bool) -> Void,
+        onSave: @escaping (String, String?, Date?, [Int]) -> Void,
+        onToggleCompleted: @escaping () -> Void,
         onDelete: @escaping () -> Void
     ) {
         self.item = item
         self.onSave = onSave
+        self.onToggleCompleted = onToggleCompleted
         self.onDelete = onDelete
         _title = State(initialValue: item.title)
+        _details = State(initialValue: item.details ?? "")
+        _isDescriptionPresented = State(initialValue: item.details != nil)
         _hasSchedule = State(initialValue: item.dueDate != nil)
         _scheduledDate = State(initialValue: item.dueDate ?? Self.defaultScheduledDate)
-        _notificationsEnabled = State(initialValue: item.notificationsEnabled)
+        _reminderOffsets = State(initialValue: Set(item.effectiveReminderOffsets))
     }
 
     var body: some View {
@@ -39,53 +61,302 @@ struct ItemEditorView: View {
 #if os(iOS)
     private var mobileEditor: some View {
         NavigationStack {
-            Form {
-                Section("Запись") {
-                    TextField("Что нужно запомнить?", text: $title, axis: .vertical).lineLimit(2...6)
-                }
-                Section("Планирование") {
-                    Toggle("Добавить дату", isOn: $hasSchedule)
-                    if hasSchedule {
-                        DatePicker("Дата", selection: $scheduledDate, displayedComponents: .date)
-                        DatePicker("Время", selection: $scheduledDate, displayedComponents: .hourAndMinute)
+            VStack(spacing: 0) {
+                mobileEditorHeader
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        mobilePrimaryContent
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Настройки")
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 2)
+
+                            mobileScheduleCard
+                            mobileNotificationCard
+                        }
+
+                        mobileCompletionButton
+                        mobileDeleteButton
                     }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 24)
+                    .padding(.bottom, 36)
                 }
-                Section("Уведомление") {
-                    Toggle("Прислать уведомление", isOn: $notificationsEnabled)
-                        .disabled(!hasSchedule)
-                    if !hasSchedule {
-                        Text("Сначала добавьте дату и время")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Section {
-                    Button("Удалить запись", role: .destructive) { onDelete(); dismiss() }
+                .scrollDismissesKeyboard(.interactively)
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y <= geometry.contentInsets.top + 2
+                } action: { _, isAtTop in
+                    isMobileEditorAtTop = isAtTop
                 }
             }
-            .navigationTitle("Изменить")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .accessibilityLabel("Отмена")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        saveAndDismiss()
-                    } label: {
-                        Image(systemName: "checkmark")
-                    }
-                    .accessibilityLabel("Сохранить")
-                    .disabled(trimmedTitle.isEmpty)
-                }
-            }
+            .background(MemoryTheme.background)
+            .contentShape(Rectangle())
+            .simultaneousGesture(strongDownDismissGesture)
+            .toolbar(.hidden, for: .navigationBar)
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .confirmationDialog(
+            "Удалить запись?",
+            isPresented: $isDeleteConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Удалить", role: .destructive) {
+                onDelete()
+                dismiss()
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Это действие нельзя отменить.")
+        }
+        .confirmationDialog(
+            "Не сохранять изменения?",
+            isPresented: $isDiscardConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Не сохранять", role: .destructive) { dismiss() }
+            Button("Продолжить редактирование", role: .cancel) {}
+        }
         .onChange(of: hasSchedule) { _, isScheduled in
-            if !isScheduled { notificationsEnabled = false }
+            if !isScheduled { reminderOffsets.removeAll() }
         }
+    }
+
+    private var mobileEditorHeader: some View {
+        ZStack {
+            Text("Напоминание")
+                .font(.system(size: 17, weight: .medium, design: .rounded))
+                .foregroundStyle(.primary)
+
+            HStack(spacing: 16) {
+                Button(action: cancelEditing) {
+                    Image(systemName: "arrow.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Назад")
+
+                Spacer(minLength: 0)
+
+                Button(action: saveAndDismiss) {
+                    Text("Готово")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(MemoryTheme.accent)
+                        .frame(minWidth: 64, minHeight: 44, alignment: .trailing)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmedTitle.isEmpty)
+                .opacity(trimmedTitle.isEmpty ? 0.42 : 1)
+                .accessibilityLabel("Сохранить")
+            }
+        }
+        .frame(height: 52)
+        .padding(.horizontal, 18)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+        .background(MemoryTheme.background)
+    }
+
+    private var mobilePrimaryContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            TextField("Что нужно запомнить?", text: $title, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 29, weight: .medium, design: .rounded))
+                .lineSpacing(2)
+                .lineLimit(1...6)
+                .focused($mobileFocusedField, equals: .title)
+                .submitLabel(.done)
+                .onSubmit { mobileFocusedField = nil }
+                .onChange(of: title) { oldValue, newValue in
+                    guard Self.isSingleInsertedLineBreak(from: oldValue, to: newValue) else { return }
+                    title = oldValue
+                    mobileFocusedField = nil
+                }
+                .accessibilityLabel("Текст напоминания")
+
+            if isDescriptionPresented {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("Описание")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+
+                    TextField("Контекст, детали или ссылка", text: $details, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 17, weight: .regular, design: .rounded))
+                        .lineSpacing(3)
+                        .lineLimit(2...10)
+                        .focused($mobileFocusedField, equals: .details)
+                        .submitLabel(.done)
+                        .onSubmit { mobileFocusedField = nil }
+                        .onChange(of: details) { oldValue, newValue in
+                            guard Self.isSingleInsertedLineBreak(from: oldValue, to: newValue) else { return }
+                            details = oldValue
+                            mobileFocusedField = nil
+                        }
+                        .accessibilityLabel("Описание напоминания")
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isDescriptionPresented = true
+                    }
+                    Task { @MainActor in
+                        mobileFocusedField = .details
+                    }
+                } label: {
+                    Label("Добавить описание", systemImage: "plus")
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 2)
+        .padding(.vertical, 4)
+        .animation(.easeInOut(duration: 0.18), value: isDescriptionPresented)
+    }
+
+    private var mobileScheduleCard: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 10) {
+                editorIcon("calendar")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Дата и время").font(.body.weight(.semibold))
+                    Text(hasSchedule ? scheduleSummary : "Запись останется без срока")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Toggle("", isOn: $hasSchedule)
+                    .labelsHidden()
+            }
+
+            if hasSchedule {
+                Divider()
+                DatePicker("Дата", selection: $scheduledDate, displayedComponents: .date)
+                    .font(.body.weight(.medium))
+                Divider()
+                DatePicker("Время", selection: $scheduledDate, displayedComponents: .hourAndMinute)
+                    .font(.body.weight(.medium))
+            }
+        }
+        .padding(17)
+        .memoryCard()
+        .animation(.easeInOut(duration: 0.18), value: hasSchedule)
+    }
+
+    private var mobileNotificationCard: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 10) {
+                editorIcon(
+                    notificationsEnabled ? "bell.fill" : "bell.slash",
+                    color: applicationNotificationsEnabled ? MemoryTheme.accent : .secondary
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Уведомления").font(.body.weight(.semibold))
+                    Text(notificationSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Toggle("", isOn: notificationsEnabledBinding)
+                    .labelsHidden()
+                    .disabled(!hasSchedule || !applicationNotificationsEnabled)
+            }
+
+            if hasSchedule && notificationsEnabled {
+                Divider()
+                reminderSelectionList
+                    .disabled(!applicationNotificationsEnabled)
+                    .opacity(applicationNotificationsEnabled ? 1 : 0.46)
+            }
+        }
+        .padding(17)
+        .memoryCard()
+        .animation(.easeInOut(duration: 0.18), value: notificationsEnabled)
+    }
+
+    private var mobileDeleteButton: some View {
+        Button(role: .destructive) {
+            isDeleteConfirmationPresented = true
+        } label: {
+            Label("Удалить запись", systemImage: "trash")
+                .font(.body.weight(.medium))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 15)
+                .background(Color.red.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var mobileCompletionButton: some View {
+        Button(action: saveToggleAndDismiss) {
+            Label(
+                item.isCompleted ? "Вернуть в активные" : "Отметить выполненным",
+                systemImage: item.isCompleted ? "arrow.uturn.backward" : "checkmark.circle"
+            )
+            .font(.body.weight(.medium))
+            .foregroundStyle(MemoryTheme.accent)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(MemoryTheme.accent.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(trimmedTitle.isEmpty)
+    }
+
+    private var strongDownDismissGesture: some Gesture {
+        DragGesture(minimumDistance: 32)
+            .onEnded { value in
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                let predictedVertical = value.predictedEndTranslation.height
+
+                guard isMobileEditorAtTop,
+                      mobileFocusedField == nil,
+                      vertical > 150,
+                      predictedVertical > 340,
+                      vertical > abs(horizontal) * 1.25 else { return }
+                cancelEditing()
+            }
+    }
+
+    private static func isSingleInsertedLineBreak(from oldValue: String, to newValue: String) -> Bool {
+        guard newValue.count == oldValue.count + 1 else { return false }
+
+        for index in newValue.indices where newValue[index] == "\n" || newValue[index] == "\r" {
+            var candidate = newValue
+            candidate.remove(at: index)
+            if candidate == oldValue { return true }
+        }
+
+        return false
+    }
+
+    private func editorIcon(
+        _ systemName: String,
+        color: Color = MemoryTheme.accent
+    ) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(color)
+            .frame(width: 36, height: 36)
+            .background(color.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 #endif
 
@@ -96,23 +367,51 @@ struct ItemEditorView: View {
 
             Divider()
 
-            VStack(spacing: 16) {
-                macTitleCard
-                macScheduleCard
-                macNotificationCard
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    macPrimaryContent
+
+                    Text("Настройки")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 2)
+
+                    macScheduleCard
+                    macNotificationCard
+                }
+                .padding(24)
             }
-            .padding(24)
-            .frame(maxHeight: .infinity, alignment: .top)
 
             Divider()
 
             macFooter
         }
-        .frame(width: 560, height: 600)
+        .frame(width: 560, height: 760)
         .background(MemoryTheme.background)
         .overlay { macPickerOverlay }
         .animation(.easeInOut(duration: 0.16), value: isCalendarPresented)
         .animation(.easeInOut(duration: 0.16), value: isTimePickerPresented)
+        .confirmationDialog(
+            "Удалить запись?",
+            isPresented: $isDeleteConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Удалить", role: .destructive) {
+                onDelete()
+                dismiss()
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Это действие нельзя отменить.")
+        }
+        .confirmationDialog(
+            "Не сохранять изменения?",
+            isPresented: $isDiscardConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Не сохранять", role: .destructive) { dismiss() }
+            Button("Продолжить редактирование", role: .cancel) {}
+        }
     }
 
     @ViewBuilder
@@ -160,7 +459,7 @@ struct ItemEditorView: View {
                 Text("Редактировать запись")
                     .font(.title3.weight(.semibold))
 
-                Text("Настройте запись, дату и уведомление")
+                Text("Настройте запись, описание, дату и уведомление")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -171,26 +470,47 @@ struct ItemEditorView: View {
         .padding(.vertical, 20)
     }
 
-    private var macTitleCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Запись", systemImage: "text.alignleft")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-
+    private var macPrimaryContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
             TextField("Что нужно запомнить?", text: $title, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 16))
-                .lineLimit(3...5)
-                .padding(14)
-                .background(Color.primary.opacity(0.045))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                .font(.system(size: 26, weight: .medium, design: .rounded))
+                .lineSpacing(2)
+                .lineLimit(1...6)
+
+            if isDescriptionPresented {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Описание")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+
+                    TextField("Контекст, детали или ссылка", text: $details, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 16, design: .rounded))
+                        .lineSpacing(2)
+                        .lineLimit(2...8)
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isDescriptionPresented = true
+                    }
+                } label: {
+                    Label("Добавить описание", systemImage: "plus")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .frame(height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .padding(18)
-        .memoryCard()
+        .padding(.horizontal, 2)
+        .padding(.vertical, 4)
+        .animation(.easeInOut(duration: 0.18), value: isDescriptionPresented)
     }
 
     private var macScheduleCard: some View {
@@ -299,56 +619,76 @@ struct ItemEditorView: View {
         .memoryCard()
         .animation(.easeInOut(duration: 0.18), value: hasSchedule)
         .onChange(of: hasSchedule) { _, isScheduled in
-            if !isScheduled { notificationsEnabled = false }
+            if !isScheduled { reminderOffsets.removeAll() }
         }
     }
 
     private var macNotificationCard: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(MemoryTheme.accent.opacity(0.13))
-                    .frame(width: 34, height: 34)
+        VStack(spacing: 14) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(MemoryTheme.accent.opacity(0.13))
+                        .frame(width: 34, height: 34)
 
-                Image(systemName: notificationsEnabled ? "bell.fill" : "bell.slash")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(MemoryTheme.accent)
+                    Image(systemName: notificationsEnabled ? "bell.fill" : "bell.slash")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(applicationNotificationsEnabled ? MemoryTheme.accent : .secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Уведомления")
+                        .font(.body.weight(.medium))
+                    Text(notificationSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: notificationsEnabledBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!hasSchedule || !applicationNotificationsEnabled)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Уведомление")
-                    .font(.body.weight(.medium))
-                Text(notificationSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if hasSchedule && notificationsEnabled {
+                Divider()
+                reminderSelectionList
+                    .disabled(!applicationNotificationsEnabled)
+                    .opacity(applicationNotificationsEnabled ? 1 : 0.46)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
-
-            Spacer()
-
-            Toggle("", isOn: $notificationsEnabled)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(!hasSchedule)
         }
         .padding(18)
         .memoryCard()
+        .animation(.easeInOut(duration: 0.18), value: notificationsEnabled)
     }
 
     private var macFooter: some View {
         HStack(spacing: 12) {
             Button(role: .destructive) {
-                onDelete()
-                dismiss()
+                isDeleteConfirmationPresented = true
             } label: {
                 Label("Удалить", systemImage: "trash")
             }
             .buttonStyle(.plain)
             .foregroundStyle(.red)
 
+            Button(action: saveToggleAndDismiss) {
+                Label(
+                    item.isCompleted ? "Вернуть" : "Выполнено",
+                    systemImage: item.isCompleted ? "arrow.uturn.backward" : "checkmark.circle"
+                )
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(MemoryTheme.accent)
+            .disabled(trimmedTitle.isEmpty)
+
             Spacer()
 
             Button("Отмена") {
-                dismiss()
+                cancelEditing()
             }
             .keyboardShortcut(.cancelAction)
 
@@ -366,6 +706,146 @@ struct ItemEditorView: View {
 #endif
 
     private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedDetails: String { details.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var notificationsEnabled: Bool { hasSchedule && !reminderOffsets.isEmpty }
+
+    private var notificationsEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { notificationsEnabled },
+            set: { isEnabled in
+                if isEnabled {
+                    if reminderOffsets.isEmpty {
+                        reminderOffsets.insert(account.defaultReminderMinutes)
+                    }
+                } else {
+                    reminderOffsets.removeAll()
+                }
+            }
+        )
+    }
+
+    private var reminderSelectionList: some View {
+        VStack(spacing: 9) {
+            ForEach(selectedReminderOffsets, id: \.self) { offset in
+                HStack(spacing: 8) {
+                    Menu {
+                        ForEach(reminderOptions(for: offset)) { option in
+                            Button {
+                                replaceReminder(offset, with: option.rawValue)
+                            } label: {
+                                if option.rawValue == offset {
+                                    Label(option.title, systemImage: "checkmark")
+                                } else {
+                                    Text(option.title)
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: "bell")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(MemoryTheme.accent)
+
+                            Text(reminderTitle(for: offset))
+                                .lineLimit(1)
+
+                            Spacer(minLength: 8)
+
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if selectedReminderOffsets.count > 1 {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                _ = reminderOffsets.remove(offset)
+                            }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 30, height: 30)
+                                .background(Color.primary.opacity(0.055))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Удалить уведомление")
+                    }
+                }
+#if os(macOS)
+                .padding(.horizontal, 11)
+                .frame(height: 38)
+#else
+                .padding(.horizontal, 12)
+                .frame(height: 44)
+#endif
+                .background {
+                    Color.primary.opacity(0.05)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                }
+            }
+
+            if !availableReminderOptions.isEmpty {
+                Menu {
+                    ForEach(availableReminderOptions) { option in
+                        Button(option.title) {
+                            addReminder(option.rawValue)
+                        }
+                    }
+                } label: {
+                    Label("Добавить уведомление", systemImage: "plus")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(MemoryTheme.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Добавляет ещё одно время уведомления")
+            }
+        }
+    }
+
+    private var selectedReminderOffsets: [Int] {
+        ReminderLeadTime.normalized(Array(reminderOffsets))
+    }
+
+    private var availableReminderOptions: [ReminderLeadTime] {
+        ReminderLeadTime.allCases.filter { !reminderOffsets.contains($0.rawValue) }
+    }
+
+    private func reminderOptions(for currentOffset: Int) -> [ReminderLeadTime] {
+        ReminderLeadTime.allCases.filter {
+            $0.rawValue == currentOffset || !reminderOffsets.contains($0.rawValue)
+        }
+    }
+
+    private func reminderTitle(for offset: Int) -> String {
+        ReminderLeadTime(rawValue: offset)?.title ?? "Выбрать время"
+    }
+
+    private func replaceReminder(_ currentOffset: Int, with newOffset: Int) {
+        guard currentOffset != newOffset else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            reminderOffsets.remove(currentOffset)
+            reminderOffsets.insert(newOffset)
+        }
+    }
+
+    private func addReminder(_ offset: Int) {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            _ = reminderOffsets.insert(offset)
+        }
+    }
 
     private var scheduleSummary: String {
 #if os(macOS)
@@ -390,16 +870,49 @@ struct ItemEditorView: View {
 
     private var notificationSummary: String {
         guard hasSchedule else { return "Сначала добавьте дату и время" }
-        return notificationsEnabled ? "Придёт в указанное время" : "Задача останется в плане без сигнала"
+        guard notificationsEnabled else { return "Задача останется в плане без сигнала" }
+        return ReminderLeadTime.summary(Array(reminderOffsets))
     }
 
     private func saveAndDismiss() {
+        persistChanges()
+        dismiss()
+    }
+
+    private func saveToggleAndDismiss() {
+        onToggleCompleted()
+        persistChanges()
+        dismiss()
+    }
+
+    private func persistChanges() {
         onSave(
             trimmedTitle,
+            Item.normalizedDetails(trimmedDetails),
             hasSchedule ? scheduledDate : nil,
-            hasSchedule && notificationsEnabled
+            hasSchedule ? ReminderLeadTime.normalized(Array(reminderOffsets)) : []
         )
-        dismiss()
+    }
+
+    private func cancelEditing() {
+        if hasUnsavedChanges {
+            isDiscardConfirmationPresented = true
+        } else {
+            dismiss()
+        }
+    }
+
+    private var hasUnsavedChanges: Bool {
+        let originalTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let originalDetails = Item.normalizedDetails(item.details)
+        let nextDetails = Item.normalizedDetails(trimmedDetails)
+        let nextDate: Date? = hasSchedule ? scheduledDate : nil
+        let nextOffsets = hasSchedule ? ReminderLeadTime.normalized(Array(reminderOffsets)) : []
+
+        return trimmedTitle != originalTitle
+            || nextDetails != originalDetails
+            || nextDate != item.dueDate
+            || nextOffsets != item.effectiveReminderOffsets
     }
 
     private static var defaultScheduledDate: Date {

@@ -13,9 +13,10 @@ import Testing
 struct MemoryTests {
 
     @Test func newItemKeepsItsContentAndState() {
-        let item = Item(title: "Купить молоко")
+        let item = Item(title: "Купить молоко", details: "Безлактозное, 2 бутылки")
 
         #expect(item.title == "Купить молоко")
+        #expect(item.details == "Безлактозное, 2 бутылки")
         #expect(item.isCompleted == false)
 
         item.isCompleted.toggle()
@@ -42,6 +43,7 @@ struct MemoryTests {
         let item = Item(title: "Позвонить", dueDate: reminderDate)
         #expect(item.dueDate == reminderDate)
         #expect(item.notificationsEnabled)
+        #expect(item.effectiveReminderOffsets == [0])
         #expect(item.completedAt == nil)
         item.setCompleted(true)
         #expect(item.isCompleted)
@@ -61,6 +63,18 @@ struct MemoryTests {
 
         #expect(item.dueDate == scheduledDate)
         #expect(!item.notificationsEnabled)
+        #expect(item.effectiveReminderOffsets.isEmpty)
+    }
+
+    @Test func itemKeepsMultipleReminderLeadTimes() {
+        let item = Item(
+            title: "Встреча",
+            dueDate: Date.now.addingTimeInterval(7_200),
+            reminderOffsets: [60, 15, 15]
+        )
+
+        #expect(item.notificationsEnabled)
+        #expect(item.effectiveReminderOffsets == [15, 60])
     }
 
     @Test func remoteTaskRoundTripKeepsSyncFields() throws {
@@ -68,6 +82,7 @@ struct MemoryTests {
         let dueDate = Date(timeIntervalSince1970: 1_800_000_000)
         let item = Item(
             title: "Общая проверка",
+            details: "Материалы лежат в общей папке",
             timestamp: Date(timeIntervalSince1970: 1_700_000_000),
             dueDate: dueDate,
             notificationsEnabled: false,
@@ -80,9 +95,26 @@ struct MemoryTests {
         #expect(restored.id == item.id)
         #expect(restored.ownerID == ownerID.uuidString.lowercased())
         #expect(restored.title == item.title)
+        #expect(restored.details == item.details)
         #expect(restored.dueDate == dueDate)
         #expect(!restored.notificationsEnabled)
+        #expect(restored.effectiveReminderOffsets.isEmpty)
         #expect(restored.updatedAt == item.updatedAt)
+    }
+
+    @Test func remoteTaskRoundTripKeepsMultipleReminders() {
+        let ownerID = UUID()
+        let item = Item(
+            title: "Встреча",
+            dueDate: Date.now.addingTimeInterval(86_400),
+            reminderOffsets: [0, 30, 1_440],
+            ownerID: ownerID.uuidString.lowercased()
+        )
+
+        let restored = RemoteTask(item: item, userID: ownerID).makeLocalItem()
+
+        #expect(restored.effectiveReminderOffsets == [0, 30, 1_440])
+        #expect(restored.notificationsEnabled)
     }
 
     @Test func syncIgnoresSubMillisecondTimestampRoundTripDifferences() throws {
@@ -108,6 +140,24 @@ struct MemoryTests {
 
         #expect(item.deletedAt != nil)
         #expect(item.updatedAt == item.deletedAt)
+    }
+
+    @Test func deletedRemoteItemKeepsItsTombstoneLocally() throws {
+        let ownerID = UUID()
+        let item = Item(
+            title: "Удалено на другом устройстве",
+            dueDate: Date.now.addingTimeInterval(3_600),
+            ownerID: ownerID.uuidString.lowercased()
+        )
+        item.markDeleted()
+
+        let remote = RemoteTask(item: item, userID: ownerID)
+        let restored = remote.makeLocalItem()
+
+        #expect(restored.deletedAt != nil)
+        #expect(restored.id == item.id)
+        #expect(!SupabaseDate.isMeaningfullyNewer(restored.updatedAt, than: item.updatedAt))
+        #expect(!SupabaseDate.isMeaningfullyNewer(item.updatedAt, than: restored.updatedAt))
     }
 
     @Test func smartInputUnderstandsTomorrowAndTime() throws {

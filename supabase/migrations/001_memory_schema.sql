@@ -6,6 +6,7 @@ create table if not exists public.profiles (
     display_name text,
     locale text not null default 'ru_RU',
     time_zone text not null default 'Europe/Samara',
+    default_reminder_minutes integer not null default 0,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
@@ -14,8 +15,10 @@ create table if not exists public.tasks (
     id uuid primary key,
     user_id uuid not null references auth.users(id) on delete cascade,
     title text not null check (char_length(title) between 1 and 1000),
+    details text check (details is null or char_length(details) <= 4000),
     due_at timestamptz,
     notifications_enabled boolean not null default false,
+    reminder_offsets integer[] not null default '{}',
     is_completed boolean not null default false,
     completed_at timestamptz,
     created_at timestamptz not null default now(),
