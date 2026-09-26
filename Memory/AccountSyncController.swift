@@ -18,6 +18,8 @@ final class AccountSyncController: ObservableObject {
     @Published private(set) var email: String?
     @Published private(set) var state: State
     @Published private(set) var defaultReminderMinutes: Int
+    @Published private(set) var defaultEntryKind: EntryKind
+    @Published private(set) var lastSignedInEmail: String?
 
     let isConfigured: Bool
     private let client: SupabaseClient?
@@ -28,12 +30,17 @@ final class AccountSyncController: ObservableObject {
     private var realtimeListenerTasks: [Task<Void, Never>] = []
     private let deviceID = UUID().uuidString.lowercased()
     private static let defaultReminderKey = "defaultReminderMinutes"
+    private static let defaultEntryKindKey = "defaultEntryKind"
+    private static let lastSignedInEmailKey = "lastSignedInEmail"
 
     init() {
         let storedDefault = UserDefaults.standard.object(forKey: Self.defaultReminderKey) as? Int
         defaultReminderMinutes = ReminderLeadTime(rawValue: storedDefault ?? 0)?.rawValue ?? 0
+        defaultEntryKind = UserDefaults.standard.string(forKey: Self.defaultEntryKindKey)
+            .flatMap(EntryKind.init(rawValue:)) ?? .reminder
+        lastSignedInEmail = UserDefaults.standard.string(forKey: Self.lastSignedInEmailKey)
 
-        if let configuration = SupabaseConfiguration.current {
+        if !VoiceReviewTesting.isEnabled, let configuration = SupabaseConfiguration.current {
             client = SupabaseClient(
                 supabaseURL: configuration.url,
                 supabaseKey: configuration.publishableKey
@@ -63,13 +70,25 @@ final class AccountSyncController: ObservableObject {
 
     func restoreSession() async {
         guard let client else { return }
+
+        if let cachedSession = client.auth.currentSession {
+            setCachedSession(
+                userID: cachedSession.user.id,
+                email: cachedSession.user.email
+            )
+        }
+
         do {
             let session = try await client.auth.session
             await setSession(userID: session.user.id, email: session.user.email)
         } catch {
-            userID = nil
-            email = nil
-            state = .ready
+            if client.auth.currentSession != nil {
+                state = .failed(error.localizedDescription)
+            } else {
+                userID = nil
+                email = nil
+                state = .ready
+            }
         }
     }
 
@@ -199,6 +218,74 @@ final class AccountSyncController: ObservableObject {
         }
     }
 
+    func setDefaultEntryKind(_ kind: EntryKind) async throws {
+        let previousValue = defaultEntryKind
+        defaultEntryKind = kind
+        UserDefaults.standard.set(kind.rawValue, forKey: Self.defaultEntryKindKey)
+
+        guard let client, let userID else { return }
+
+        do {
+            try await client
+                .from("profiles")
+                .update(ProfileEntryKindUpdate(defaultEntryKind: kind.rawValue))
+                .eq("id", value: userID)
+                .execute()
+        } catch {
+            defaultEntryKind = previousValue
+            UserDefaults.standard.set(previousValue.rawValue, forKey: Self.defaultEntryKindKey)
+            throw error
+        }
+    }
+
+    func interpretVoiceRemotely(
+        _ transcript: String,
+        now: Date,
+        calendar: Calendar
+    ) async throws -> VoiceCaptureResult {
+        guard let client else { throw AccountSyncError.notConfigured }
+        guard isSignedIn else { throw AccountSyncError.authenticationRequired }
+
+        let session = try await client.auth.session
+        client.functions.setAuth(token: session.accessToken)
+
+        let learningExamples: [VoiceLearningPromptExample]
+        if UserDefaults.standard.bool(forKey: VoicePipelineSettings.personalLearningEnabledKey) {
+            learningExamples = VoiceLabStore.similarExamples(to: transcript).map { example in
+                VoiceLearningPromptExample(
+                    transcript: example.transcript,
+                    title: example.expectedTitle,
+                    details: example.expectedDetails,
+                    dueDate: example.expectedDueDate.map(Self.voiceDateFormatter.string),
+                    referenceDate: Self.voiceDateFormatter.string(from: example.referenceDate),
+                    timeZone: example.timeZoneIdentifier
+                )
+            }
+        } else {
+            learningExamples = []
+        }
+
+        let response: RemoteVoiceCaptureResponse = try await client.functions.invoke(
+            "interpret-voice",
+            options: FunctionInvokeOptions(
+                body: RemoteVoiceInterpretationRequest(
+                    transcript: transcript,
+                    referenceDate: Self.voiceDateFormatter.string(from: now),
+                    timeZone: calendar.timeZone.identifier,
+                    locale: calendar.locale?.identifier ?? "ru_RU",
+                    examples: learningExamples
+                ),
+                timeoutInterval: 8
+            )
+        )
+
+        return try response.captureResult(
+            transcript: transcript,
+            dateFormatter: Self.voiceDateFormatter,
+            defaultKind: defaultEntryKind
+        )
+    }
+
     private func setSession(userID: UUID, email: String?) async {
         let nextUserID = userID.uuidString.lowercased()
         if self.userID != nextUserID {
@@ -206,8 +293,22 @@ final class AccountSyncController: ObservableObject {
         }
         self.userID = nextUserID
         self.email = email
+        rememberEmail(email)
         state = .ready
         await loadProfileSettings(userID: nextUserID)
+    }
+
+    private func setCachedSession(userID: UUID, email: String?) {
+        self.userID = userID.uuidString.lowercased()
+        self.email = email
+        rememberEmail(email)
+        state = .ready
+    }
+
+    private func rememberEmail(_ email: String?) {
+        guard let email, !email.isEmpty else { return }
+        lastSignedInEmail = email
+        UserDefaults.standard.set(email, forKey: Self.lastSignedInEmailKey)
     }
 
     private func loadProfileSettings(userID: String) async {
@@ -215,7 +316,7 @@ final class AccountSyncController: ObservableObject {
         do {
             let settings: ProfileSettings = try await client
                 .from("profiles")
-                .select("default_reminder_minutes")
+                .select("default_reminder_minutes, default_entry_kind")
                 .eq("id", value: userID)
                 .single()
                 .execute()
@@ -224,10 +325,19 @@ final class AccountSyncController: ObservableObject {
             let normalized = ReminderLeadTime(rawValue: settings.defaultReminderMinutes)?.rawValue ?? 0
             defaultReminderMinutes = normalized
             UserDefaults.standard.set(normalized, forKey: Self.defaultReminderKey)
+            let entryKind = settings.defaultEntryKind.flatMap(EntryKind.init(rawValue:)) ?? .reminder
+            defaultEntryKind = entryKind
+            UserDefaults.standard.set(entryKind.rawValue, forKey: Self.defaultEntryKindKey)
         } catch {
             // The local preference remains available while the profile cannot be loaded.
         }
     }
+
+    private static let voiceDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     private func ensureRealtime(
         modelContext: ModelContext,
@@ -301,9 +411,19 @@ final class AccountSyncController: ObservableObject {
 
 private struct ProfileSettings: Decodable {
     let defaultReminderMinutes: Int
+    let defaultEntryKind: String?
 
     enum CodingKeys: String, CodingKey {
         case defaultReminderMinutes = "default_reminder_minutes"
+        case defaultEntryKind = "default_entry_kind"
+    }
+}
+
+private struct ProfileEntryKindUpdate: Encodable {
+    let defaultEntryKind: String
+
+    enum CodingKeys: String, CodingKey {
+        case defaultEntryKind = "default_entry_kind"
     }
 }
 
@@ -315,13 +435,108 @@ private struct ProfileSettingsUpdate: Encodable {
     }
 }
 
+private struct RemoteVoiceInterpretationRequest: Encodable {
+    let transcript: String
+    let referenceDate: String
+    let timeZone: String
+    let locale: String
+    let examples: [VoiceLearningPromptExample]
+}
+
+struct RemoteVoiceCaptureResponse: Decodable {
+    let entries: [RemoteVoiceInterpretation]?
+    let title: String?
+    let details: String?
+    let dueDate: String?
+    let reminderOffsets: [Int]?
+    let confidence: VoiceInterpretationConfidence?
+    let ambiguities: [VoiceInterpretationAmbiguity]?
+
+    func captureResult(
+        transcript: String,
+        dateFormatter: ISO8601DateFormatter,
+        defaultKind: EntryKind
+    ) throws -> VoiceCaptureResult {
+        let sourceEntries: [RemoteVoiceInterpretation]
+        if let entries {
+            sourceEntries = entries
+        } else if let title, let confidence {
+            sourceEntries = [RemoteVoiceInterpretation(
+                sourceText: transcript,
+                title: title,
+                details: details,
+                dueDate: dueDate,
+                endDate: nil,
+                kind: nil,
+                reminderOffsets: reminderOffsets ?? [],
+                confidence: confidence,
+                ambiguities: ambiguities ?? []
+            )]
+        } else {
+            throw VoiceSemanticError.emptyResult
+        }
+        guard !sourceEntries.isEmpty, sourceEntries.count <= 6 else {
+            throw VoiceSemanticError.emptyResult
+        }
+        let plainDateFormatter = ISO8601DateFormatter()
+        let captured = try sourceEntries.map { entry -> VoiceCaptureEntry in
+            let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { throw VoiceSemanticError.emptyResult }
+            let dueDate = entry.dueDate.flatMap {
+                dateFormatter.date(from: $0) ?? plainDateFormatter.date(from: $0)
+            }
+            if entry.dueDate != nil && dueDate == nil { throw VoiceSemanticError.emptyResult }
+            let endDate = entry.endDate.flatMap {
+                dateFormatter.date(from: $0) ?? plainDateFormatter.date(from: $0)
+            }
+            if entry.endDate != nil && endDate == nil { throw VoiceSemanticError.emptyResult }
+            let sourceText = entry.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let spokenPart = sourceText?.isEmpty == false ? sourceText! : transcript
+            let kind = entry.kind ?? EntryKindInference.infer(
+                from: spokenPart, hasDate: dueDate != nil
+            ) ?? defaultKind
+            return VoiceCaptureEntry(
+                sourceText: spokenPart,
+                draft: ReminderDraft(
+                    transcript: spokenPart,
+                    title: title,
+                    details: Item.normalizedDetails(entry.details),
+                    dueDate: dueDate,
+                    reminderOffsets: dueDate == nil
+                        ? [] : ReminderLeadTime.normalized(entry.reminderOffsets),
+                    confidence: entry.confidence,
+                    ambiguities: Set(entry.ambiguities)
+                ),
+                kind: kind,
+                endDate: kind == .event ? endDate : nil
+            )
+        }
+        return VoiceCaptureResult(entries: captured)
+    }
+}
+
+struct RemoteVoiceInterpretation: Decodable {
+    let sourceText: String?
+    let title: String
+    let details: String?
+    let dueDate: String?
+    let endDate: String?
+    let kind: EntryKind?
+    let reminderOffsets: [Int]
+    let confidence: VoiceInterpretationConfidence
+    let ambiguities: [VoiceInterpretationAmbiguity]
+}
+
 enum AccountSyncError: LocalizedError {
     case notConfigured
+    case authenticationRequired
 
     var errorDescription: String? {
         switch self {
         case .notConfigured:
             "Supabase ещё не подключён к приложению."
+        case .authenticationRequired:
+            "Для облачного улучшения голоса нужно войти в аккаунт."
         }
     }
 }

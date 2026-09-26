@@ -1,0 +1,2 @@
+[functions.interpret-voice]
+verify_jwt = true

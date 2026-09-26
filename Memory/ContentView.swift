@@ -39,9 +39,52 @@ enum MemorySection: String, CaseIterable, Identifiable {
         case .all: "rectangle.stack"
         }
     }
+
 }
 
-private enum AllItemsGroup: CaseIterable, Identifiable {
+#if os(macOS)
+private enum DesktopSection: String, CaseIterable, Identifiable {
+    case now
+    case all
+    case inbox
+    case archive
+    case profile
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .now: "Сейчас"
+        case .all: "Все записи"
+        case .inbox: "Входящие"
+        case .archive: "Архив"
+        case .profile: "Профиль"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .now: "sparkles"
+        case .all: "rectangle.stack.fill"
+        case .inbox: "tray.full.fill"
+        case .archive: "archivebox.fill"
+        case .profile: "person.crop.circle.fill"
+        }
+    }
+
+    var shortcut: KeyEquivalent {
+        switch self {
+        case .now: "1"
+        case .all: "2"
+        case .inbox: "3"
+        case .archive: "4"
+        case .profile: "5"
+        }
+    }
+}
+#endif
+
+enum AllItemsGroup: CaseIterable, Identifiable {
     case overdue, today, tomorrow, week, later, noDate
 
     var id: Self { self }
@@ -76,17 +119,52 @@ private enum AllItemsGroup: CaseIterable, Identifiable {
         case .noDate: .secondary
         }
     }
+
+    static func group(for item: Item, now: Date, using baseCalendar: Calendar = .current) -> Self {
+        guard let dueDate = item.dueDate else { return .noDate }
+
+        var calendar = baseCalendar
+        calendar.firstWeekday = 2 // Monday
+
+        if item.isEvent {
+            let today = calendar.startOfDay(for: now)
+            let startDay = calendar.startOfDay(for: dueDate)
+            let endDay = calendar.startOfDay(for: item.endDate ?? dueDate)
+            if today >= startDay && today <= endDay { return .today }
+        } else if dueDate < now {
+            return .overdue
+        }
+
+        if calendar.isDate(dueDate, inSameDayAs: now) { return .today }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(dueDate, inSameDayAs: tomorrow) {
+            return .tomorrow
+        }
+        if let currentWeek = calendar.dateInterval(of: .weekOfYear, for: now),
+           dueDate < currentWeek.end {
+            return .week
+        }
+        return .later
+    }
 }
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var account: AccountSyncController
     @Query(sort: \Item.timestamp, order: .reverse) private var items: [Item]
     @State private var selectedSection: MemorySection = .now
     @State private var searchText = ""
     @State private var editingItem: Item?
+    @State private var draftEditingItem: Item?
+    @State private var detailedDraftCommitVersion = 0
+    @State private var voiceReviewSession: VoiceBatchReviewSession?
+    @State private var pendingReviewNavigation: (() -> Void)?
+    @State private var isReviewExitConfirmationPresented = false
     @State private var recentlyAddedItem: Item?
+    @State private var recentlyAddedBatchCount: Int?
+    @State private var batchConfirmationVersion = 0
     @State private var suppressItemOpening = false
     @State private var isAccountPresented = false
     @State private var archiveSearchText = ""
@@ -96,6 +174,12 @@ struct ContentView: View {
     @State private var currentDate = Date.now
 #if os(macOS)
     @State private var notificationsAreDisabled = false
+    @State private var desktopSection: DesktopSection = .now
+    @State private var isDesktopSidebarCollapsed = false
+    @State private var desktopSidebarWidth: CGFloat = 232
+    @State private var desktopSidebarDragStartWidth: CGFloat?
+    @State private var isDesktopComposerPresented = false
+    @State private var isEditingNewDesktopItem = false
 #endif
 #if os(iOS)
     @AppStorage(ReminderScheduler.applicationNotificationsEnabledKey)
@@ -106,6 +190,7 @@ struct ContentView: View {
     @State private var hasTriggeredPageSwipe = false
     @State private var isMobileProfilePresented = false
     @State private var isMobileArchivePresented = false
+    @State private var isVoiceLabPresented = false
     @State private var isProfileWorking = false
 #endif
 
@@ -118,7 +203,29 @@ struct ContentView: View {
 #endif
         }
         .tint(MemoryTheme.accent)
+        .confirmationDialog("Выйти из просмотра записей?", isPresented: $isReviewExitConfirmationPresented, titleVisibility: .visible) {
+            if let session = voiceReviewSession, session.selectedEntryID == nil, session.canSave {
+                Button("Сохранить и перейти") {
+                    if finishVoiceReview(session) { completeReviewNavigation() }
+                }
+            }
+            Button("Выйти без изменений", role: .destructive) {
+                dismissVoiceReview()
+                completeReviewNavigation()
+            }
+            Button("Остаться", role: .cancel) { pendingReviewNavigation = nil }
+        } message: {
+            Text(voiceReviewSession?.batch.isPersisted == true
+                ? "Неприменённые изменения будут потеряны. Созданные записи останутся."
+                : "Несохранённые записи будут потеряны.")
+        }
         .task {
+#if DEBUG
+            if VoiceReviewTesting.isEnabled {
+                voiceReviewSession = VoiceReviewTesting.session()
+                return
+            }
+#endif
             repairDuplicateIdentifiers()
             await account.restoreSession()
 #if os(macOS)
@@ -133,7 +240,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
+            guard phase == .active, !VoiceReviewTesting.isEnabled else { return }
             currentDate = .now
             Task {
 #if os(macOS)
@@ -147,16 +254,18 @@ struct ContentView: View {
                 isInboxPresented = false
             }
         }
-#if os(macOS)
-        .sheet(item: $editingItem) { item in
+#if os(iOS)
+        .fullScreenCover(item: $editingItem) { item in
             ItemEditorView(
                 item: item,
-                onSave: { title, details, date, reminderOffsets in
+                onSave: { title, details, kind, date, endDate, reminderOffsets in
                     update(
                         item,
                         title: title,
                         details: details,
+                        entryKind: kind,
                         dueDate: date,
+                        endDate: endDate,
                         reminderOffsets: reminderOffsets
                     )
                 },
@@ -164,22 +273,30 @@ struct ContentView: View {
                 onDelete: { delete(item) }
             )
         }
-#else
-        .fullScreenCover(item: $editingItem) { item in
+        .fullScreenCover(item: $draftEditingItem) { draft in
             ItemEditorView(
-                item: item,
-                onSave: { title, details, date, reminderOffsets in
-                    update(
-                        item,
+                item: draft,
+                onSave: { title, details, kind, date, endDate, reminderOffsets in
+                    if addItem(
                         title: title,
                         details: details,
+                        entryKind: kind,
                         dueDate: date,
+                        endDate: endDate,
                         reminderOffsets: reminderOffsets
-                    )
+                    ) != nil {
+                        detailedDraftCommitVersion += 1
+                    }
                 },
-                onToggleCompleted: { toggleCompleted(item) },
-                onDelete: { delete(item) }
+                onToggleCompleted: {},
+                onDelete: {},
+                isNew: true
             )
+        }
+        .fullScreenCover(isPresented: $isVoiceLabPresented) {
+            VoiceLabView {
+                isVoiceLabPresented = false
+            }
         }
 #endif
 #if os(macOS)
@@ -202,68 +319,639 @@ struct ContentView: View {
 
 #if os(macOS)
     private var desktopLayout: some View {
-        NavigationSplitView {
-            VStack(spacing: 0) {
-                HStack(spacing: 11) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10).fill(MemoryTheme.accent.gradient)
-                        Image(systemName: "brain.head.profile")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                    .frame(width: 34, height: 34)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Norka").font(.headline)
-                        Text("Внешняя память")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
+        desktopWorkspaceLayout
+            .frame(minWidth: 620, idealWidth: 1080, minHeight: 600, idealHeight: 760)
+        .background(MemoryTheme.background)
+    }
+
+    private var desktopWorkspaceLayout: some View {
+        GeometryReader { proxy in
+            let maximumSidebarWidth = max(224, min(330, proxy.size.width - 520))
+            let effectiveSidebarWidth = isDesktopSidebarCollapsed
+                ? 72
+                : min(max(desktopSidebarWidth, 224), maximumSidebarWidth)
+            let resizeHandleWidth: CGFloat = isDesktopSidebarCollapsed ? 1 : 9
+            let workspaceWidth = max(proxy.size.width - effectiveSidebarWidth - resizeHandleWidth, 0)
+            let showsDetailPane = editingItem != nil && workspaceWidth >= 1_040
+            let detailPaneWidth = min(max(workspaceWidth * 0.42, 440), 520)
+
+            HStack(spacing: 0) {
+                desktopSidebar
+                    .frame(width: effectiveSidebarWidth)
+
+                desktopSidebarResizeHandle
+
+                desktopWorkspaceContent(
+                    showsDetailPane: showsDetailPane,
+                    detailPaneWidth: detailPaneWidth
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .animation(.easeInOut(duration: 0.22), value: editingItem?.id)
+            .animation(.easeInOut(duration: 0.22), value: showsDetailPane)
+            .overlay(alignment: .bottomTrailing) {
+                if let item = recentlyAddedItem, editingItem == nil {
+                    captureConfirmation(for: item)
+                        .frame(maxWidth: 420)
+                        .padding(24)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if let count = recentlyAddedBatchCount {
+                    batchConfirmation(count: count)
+                        .padding(24)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                .padding(16)
-                List(MemorySection.allCases, selection: $selectedSection) { section in
-                    Label(section.title, systemImage: section.icon).tag(section)
+            }
+        }
+        .animation(.spring(response: 0.34, dampingFraction: 0.9), value: isDesktopSidebarCollapsed)
+        .background(MemoryTheme.background)
+    }
+
+    @ViewBuilder private func desktopWorkspaceContent(
+        showsDetailPane: Bool,
+        detailPaneWidth: CGFloat
+    ) -> some View {
+        if let session = voiceReviewSession {
+            voiceReviewPage(session)
+        } else {
+            ZStack {
+                HStack(spacing: 0) {
+                    desktopSectionContent
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .opacity(editingItem != nil && !showsDetailPane ? 0 : 1)
+                        .allowsHitTesting(editingItem == nil || showsDetailPane)
+                        .accessibilityHidden(editingItem != nil && !showsDetailPane)
+
+                    if let item = editingItem, showsDetailPane {
+                        desktopItemEditor(item, compact: true)
+                            .id(item.id)
+                            .frame(width: detailPaneWidth)
+                            .padding(.vertical, 16)
+                            .padding(.trailing, 16)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
                 }
-                .listStyle(.sidebar)
-                Button {
-                    isAccountPresented = true
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: account.isSignedIn ? "checkmark.icloud.fill" : "person.crop.circle")
-                            .foregroundStyle(MemoryTheme.accent)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(account.email ?? "Аккаунт")
-                                .lineLimit(1)
-                            Text(account.statusText)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+
+                if let item = editingItem, !showsDetailPane {
+                    desktopItemEditor(item, compact: false)
+                        .id(item.id)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .clipped()
+        }
+    }
+
+    private var desktopSidebar: some View {
+        VStack(spacing: 0) {
+            Group {
+                if isDesktopSidebarCollapsed {
+                    Button {
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+                            isDesktopSidebarCollapsed = false
                         }
-                        Spacer()
+                    } label: {
+                        Image(systemName: "sidebar.right")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: 42, height: 42)
+                            .background(Color.primary.opacity(0.055))
+                            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .help("Развернуть боковую панель")
+                } else {
+                    HStack(spacing: 12) {
+                        Image("NorkaLogo")
+                            .resizable()
+                            .renderingMode(.template)
+                            .scaledToFit()
+                            .foregroundStyle(.primary)
+                            .frame(width: 86, height: 24)
+
+                        Spacer(minLength: 8)
+
+                        Button {
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+                                isDesktopSidebarCollapsed = true
+                            }
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                                .font(.system(size: 14, weight: .semibold))
+                                .frame(width: 32, height: 32)
+                                .background(Color.primary.opacity(0.055))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Свернуть боковую панель")
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, isDesktopSidebarCollapsed ? 14 : 18)
+            .padding(.top, 20)
+            .padding(.bottom, 18)
+
+            VStack(spacing: 6) {
+                ForEach(DesktopSection.allCases.filter { $0 != .profile }) { section in
+                    desktopSidebarButton(section)
+                }
+            }
+            .padding(.horizontal, 10)
+
+            Spacer(minLength: 18)
+
+            Button {
+                selectDesktopSection(.profile)
+            } label: {
+                if isDesktopSidebarCollapsed {
+                    Text(desktopProfileInitial)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(width: 42, height: 42)
+                        .background(MemoryTheme.accent.gradient)
+                        .clipShape(Circle())
+                        .frame(maxWidth: .infinity)
+                } else {
+                    HStack(spacing: 11) {
+                        Text(desktopProfileInitial)
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(MemoryTheme.accent.gradient)
+                            .clipShape(Circle())
+
+                        Text(account.email ?? "Профиль")
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(10)
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(desktopSection == .profile ? MemoryTheme.accent : Color.primary)
+            .background(
+                desktopSection == .profile
+                    ? MemoryTheme.accent.opacity(0.12)
+                    : Color.primary.opacity(isDesktopSidebarCollapsed ? 0 : 0.045)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(isDesktopSidebarCollapsed ? 14 : 12)
+            .help("Профиль")
+            .keyboardShortcut("5", modifiers: .command)
+        }
+        .background(.ultraThinMaterial)
+        .clipped()
+    }
+
+    private var desktopSidebarResizeHandle: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(width: 1)
+
+            Color.clear
+                .frame(width: 9)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { value in
+                            guard !isDesktopSidebarCollapsed else { return }
+                            if desktopSidebarDragStartWidth == nil {
+                                desktopSidebarDragStartWidth = desktopSidebarWidth
+                            }
+                            let proposed = (desktopSidebarDragStartWidth ?? desktopSidebarWidth)
+                                + value.translation.width
+                            desktopSidebarWidth = min(max(proposed, 224), 330)
+                        }
+                        .onEnded { _ in
+                            desktopSidebarDragStartWidth = nil
+                        }
+                )
+        }
+        .frame(width: isDesktopSidebarCollapsed ? 1 : 9)
+        .help("Изменить ширину боковой панели")
+    }
+
+    private func desktopSidebarButton(_ section: DesktopSection) -> some View {
+        Button {
+            selectDesktopSection(section)
+        } label: {
+            if isDesktopSidebarCollapsed {
+                Image(systemName: section.icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        desktopSection == section
+                            ? MemoryTheme.accent.opacity(0.12)
+                            : Color.clear
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            } else {
+                HStack(spacing: 11) {
+                    Image(systemName: section.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 24)
+
+                    Text(section.title)
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.88)
+
+                    Spacer(minLength: 8)
+
+                    if let count = desktopBadgeCount(for: section), count > 0 {
+                        Text("\(count)")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .padding(.horizontal, 7)
+                            .frame(minHeight: 22)
+                            .background(Color.primary.opacity(0.07))
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                .background(
+                    desktopSection == section
+                        ? MemoryTheme.accent.opacity(0.12)
+                        : Color.clear
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(desktopSection == section ? MemoryTheme.accent : Color.primary)
+        .help(section.title)
+        .keyboardShortcut(section.shortcut, modifiers: .command)
+    }
+
+    private func selectDesktopSection(_ section: DesktopSection) {
+        requestVoiceReviewExit {
+            withAnimation(.easeOut(duration: 0.16)) {
+                desktopSection = section
+                editingItem = nil
+                isEditingNewDesktopItem = false
+                isDesktopComposerPresented = false
+            }
+        }
+    }
+
+    private func desktopBadgeCount(for section: DesktopSection) -> Int? {
+        switch section {
+        case .now: overdueItems.count + todayItems.count
+        case .all: activeItems.count
+        case .inbox: inboxItems.count
+        case .archive: completedItems.count
+        case .profile: nil
+        }
+    }
+
+    @ViewBuilder private var desktopSectionContent: some View {
+        switch desktopSection {
+        case .now:
+            desktopNowPage
+        case .all:
+            desktopRecordsPage(
+                title: "Все записи",
+                search: searchField,
+                content: AnyView(activeItemsListContent)
+            )
+        case .inbox:
+            desktopRecordsPage(
+                title: "Входящие",
+                search: inboxSearchField,
+                content: AnyView(desktopInboxContent)
+            )
+        case .archive:
+            desktopRecordsPage(
+                title: "Архив",
+                search: desktopArchiveSearchField,
+                allowsCapture: false,
+                content: AnyView(desktopArchiveContent)
+            )
+        case .profile:
+            desktopProfilePage
+        }
+    }
+
+    private func desktopItemEditor(_ item: Item, compact: Bool) -> some View {
+        ItemEditorView(
+            item: item,
+            onSave: { title, details, kind, date, endDate, reminderOffsets in
+                if !isEditingNewDesktopItem {
+                    update(
+                        item,
+                        title: title,
+                        details: details,
+                        entryKind: kind,
+                        dueDate: date,
+                        endDate: endDate,
+                        reminderOffsets: reminderOffsets
+                    )
+                } else {
+                    if addItem(
+                        title: title,
+                        details: details,
+                        entryKind: kind,
+                        dueDate: date,
+                        endDate: endDate,
+                        reminderOffsets: reminderOffsets
+                    ) != nil {
+                        detailedDraftCommitVersion += 1
+                    }
+                }
+            },
+            onToggleCompleted: { toggleCompleted(item) },
+            onDelete: { delete(item) },
+            isEmbedded: true,
+            isCompactDesktopPane: compact,
+            isNew: isEditingNewDesktopItem,
+            onDismiss: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    editingItem = nil
+                    isEditingNewDesktopItem = false
+                }
+            }
+        )
+        .environmentObject(account)
+        .background {
+            if compact {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+        }
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: compact ? 22 : 0,
+                style: .continuous
+            )
+        )
+        .overlay {
+            if compact {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+        }
+        .shadow(
+            color: compact ? Color.black.opacity(0.12) : .clear,
+            radius: compact ? 20 : 0,
+            y: compact ? 8 : 0
+        )
+    }
+
+    private var desktopNowPage: some View {
+        ScrollView {
+            VStack(spacing: 28) {
+                desktopPageHeader(
+                    title: "Сегодня",
+                    caption: Self.mainDateFormatter.string(from: currentDate)
+                )
+                .frame(maxWidth: 760)
+
+                if notificationsAreDisabled {
+                    notificationSettingsBanner
+                        .frame(maxWidth: 680)
+                }
+
+                QuickCaptureCard(
+                    defaultPreset: .today,
+                    presentation: .desktopWorkspace,
+                    detailCommitSignal: detailedDraftCommitVersion,
+                    remoteVoiceInterpreter: remoteVoiceInterpreter,
+                    onOpenDetails: openDetailedDraft,
+                    onReviewBatch: presentVoiceBatch,
+                    onAdd: addItem
+                )
+                .id("mac-workspace-composer")
+                .frame(maxWidth: 680)
+
+                desktopPrioritySection
+                    .frame(maxWidth: 680)
+            }
+            .padding(.horizontal, 30)
+            .padding(.top, 26)
+            .padding(.bottom, 40)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func desktopRecordsPage<Search: View>(
+        title: String,
+        search: Search,
+        allowsCapture: Bool = true,
+        content: AnyView
+    ) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                desktopPageHeader(title: title, caption: nil)
+                search
+                content
+            }
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, 26)
+            .padding(.bottom, allowsCapture ? 130 : 40)
+            .frame(maxWidth: .infinity)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if allowsCapture {
+                desktopRecordsCaptureControl
+            }
+        }
+    }
+
+    private var desktopPrioritySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(desktopPriorityIsOverdue ? "Требует внимания" : "Ближайшее")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            if let item = desktopPriorityItem {
+                HomePriorityCard(
+                    item: item,
+                    isOverdue: desktopPriorityIsOverdue,
+                    onToggle: { toggleCompleted(item) },
+                    onEdit: { editingItem = item }
+                )
+            } else {
+                TodayEmptyView(hasUpcomingItems: false)
+            }
+        }
+    }
+
+    private var desktopPriorityItem: Item? {
+        overdueItems.last ?? todayItems.first
+    }
+
+    private var desktopPriorityIsOverdue: Bool {
+        !overdueItems.isEmpty
+    }
+
+    @ViewBuilder private var desktopRecordsCaptureControl: some View {
+        if isDesktopComposerPresented {
+            QuickCaptureCard(
+                defaultPreset: desktopSection == .inbox ? .none : .today,
+                presentation: .desktopInline,
+                autofocus: true,
+                detailCommitSignal: detailedDraftCommitVersion,
+                remoteVoiceInterpreter: remoteVoiceInterpreter,
+                onDismiss: {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+                        isDesktopComposerPresented = false
+                    }
+                },
+                onOpenDetails: openDetailedDraft,
+                onReviewBatch: presentVoiceBatch,
+                onAdd: { title, details, kind, dueDate, endDate, reminderOffsets in
+                    let itemID = addItem(
+                        title: title,
+                        details: details,
+                        entryKind: kind,
+                        dueDate: dueDate,
+                        endDate: endDate,
+                        reminderOffsets: reminderOffsets
+                    )
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+                        isDesktopComposerPresented = false
+                    }
+                    return itemID
+                }
+            )
+            .id("desktop-records-composer-\(desktopSection.rawValue)")
+            .frame(maxWidth: 570)
+            .padding(.horizontal, 30)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            HStack {
+                Spacer()
+                Button {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                        isDesktopComposerPresented = true
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 54, height: 54)
+                        .background(MemoryTheme.accent.gradient)
+                        .clipShape(Circle())
+                        .shadow(color: MemoryTheme.accent.opacity(0.2), radius: 12, y: 6)
                 }
                 .buttonStyle(.plain)
-                .padding(16)
+                .help("Добавить напоминание")
+                .accessibilityLabel("Добавить напоминание")
             }
-            .navigationSplitViewColumnWidth(min: 210, ideal: 230)
-        } detail: {
-            sectionContent
-                .frame(maxWidth: 920)
-                .frame(maxWidth: .infinity)
-                .overlay(alignment: .bottomTrailing) {
-                    if let item = recentlyAddedItem {
-                        captureConfirmation(for: item)
-                            .frame(maxWidth: 470)
-                            .padding(24)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
+            .frame(maxWidth: 820)
+            .padding(.horizontal, 30)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .transition(.scale(scale: 0.84, anchor: .bottomTrailing).combined(with: .opacity))
         }
+    }
+
+    @ViewBuilder private var desktopInboxContent: some View {
+        if searchedInboxItems.isEmpty {
+            RecordsEmptyView(
+                icon: inboxSearchTextIsEmpty ? "tray" : "magnifyingglass",
+                title: inboxSearchTextIsEmpty ? "Входящие пусты" : "Ничего не нашлось",
+                message: inboxSearchTextIsEmpty
+                    ? "Напоминания без срока появятся здесь."
+                    : "Попробуйте другой запрос."
+            )
+        } else {
+            taskRows(searchedInboxItems)
+        }
+    }
+
+    @ViewBuilder private var desktopArchiveContent: some View {
+        if searchedCompletedItems.isEmpty {
+            RecordsEmptyView(
+                icon: archiveSearchTextIsEmpty ? "archivebox" : "magnifyingglass",
+                title: archiveSearchTextIsEmpty ? "Архив пуст" : "Ничего не нашлось",
+                message: archiveSearchTextIsEmpty
+                    ? "Выполненные напоминания появятся здесь."
+                    : "Попробуйте другой запрос."
+            )
+        } else {
+            taskRows(searchedCompletedItems)
+        }
+    }
+
+    private var desktopArchiveSearchField: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Поиск в архиве", text: $archiveSearchText)
+                .textFieldStyle(.plain)
+            if !archiveSearchText.isEmpty {
+                Button { archiveSearchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Очистить поиск")
+            }
+        }
+        .padding(15)
+        .memoryCard()
+    }
+
+    private func desktopPageHeader(title: String, caption: String?) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.system(size: 30, weight: .medium, design: .rounded))
+            if let caption {
+                Text(caption)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var desktopProfilePage: some View {
+        AccountView(
+            embedded: true,
+            onOpenArchive: { selectDesktopSection(.archive) }
+        )
+            .environmentObject(account)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var desktopProfileInitial: String {
+        guard let first = account.email?.trimmingCharacters(in: .whitespacesAndNewlines).first else {
+            return "N"
+        }
+        return String(first).uppercased()
+    }
+
+    private var homePriorityItem: Item? {
+        if let overdue = overdueItems.last { return overdue }
+        if let today = todayItems.first { return today }
+        return upcomingItems.first
+    }
+
+    private var homePriorityIsOverdue: Bool {
+        guard let item = homePriorityItem, let dueDate = item.dueDate else { return false }
+        return dueDate < currentDate
     }
 #endif
 
 #if os(iOS)
-    private var mobileLayout: some View {
+    @ViewBuilder private var mobileLayout: some View {
+        if let session = voiceReviewSession {
+            voiceReviewPage(session)
+        } else {
+            mobileMainLayout
+        }
+    }
+
+    private var mobileMainLayout: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 mobilePersistentHeader
@@ -280,6 +968,8 @@ struct ContentView: View {
                                 priorityItem: homePriorityItem,
                                 isPriorityOverdue: homePriorityIsOverdue,
                                 additionalPriorityCount: homeAdditionalPriorityCount,
+                                detailCommitSignal: detailedDraftCommitVersion,
+                                remoteVoiceInterpreter: remoteVoiceInterpreter,
                                 onTogglePriority: {
                                     guard let item = homePriorityItem else { return }
                                     toggleCompleted(item)
@@ -289,6 +979,8 @@ struct ContentView: View {
                                     editingItem = item
                                 },
                                 onShowAll: { navigateMobile(to: .all) },
+                                onOpenDetails: openDetailedDraft,
+                                onReviewBatch: presentVoiceBatch,
                                 onAdd: addItem
                             )
                             .zIndex(2)
@@ -302,6 +994,12 @@ struct ContentView: View {
                         .overlay(alignment: .top) {
                             if let item = recentlyAddedItem {
                                 captureConfirmation(for: item)
+                                    .padding(.horizontal, 18)
+                                    .padding(.top, 8)
+                                    .transition(.move(edge: .top).combined(with: .opacity))
+                                    .zIndex(10)
+                            } else if let count = recentlyAddedBatchCount {
+                                batchConfirmation(count: count)
                                     .padding(.horizontal, 18)
                                     .padding(.top, 8)
                                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -386,7 +1084,7 @@ struct ContentView: View {
                                 }
                                 .transition(.scale(scale: 0.78).combined(with: .opacity))
                         } else {
-                            GlassVoiceOrb(isListening: false, isPulsing: false, size: 34)
+                            GlassVoiceOrb(isListening: false, isProcessing: false, isPulsing: false, size: 34)
                                 .frame(width: 52, height: 52)
                                 .clipShape(Circle())
                                 .contentShape(Circle())
@@ -446,10 +1144,10 @@ struct ContentView: View {
                     .allowsHitTesting(false)
             }
         }
-        .frame(height: 52)
+        .frame(height: 56)
         .padding(.horizontal, 18)
-        .padding(.top, 6)
-        .padding(.bottom, 2)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
         .background(MemoryTheme.background)
     }
 
@@ -577,6 +1275,58 @@ struct ContentView: View {
             ScrollView {
                 VStack(spacing: 26) {
                     mobileProfileHero
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Создание")
+                            .font(.system(size: 17, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 4)
+
+                        HStack(spacing: 14) {
+                            profileSettingsIcon(account.defaultEntryKind.icon)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Новая запись")
+                                    .font(.body.weight(.medium))
+                                Text("Если тип не указан в тексте")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer(minLength: 8)
+
+                            Menu {
+                                ForEach(EntryKind.allCases) { kind in
+                                    Button {
+                                        setDefaultEntryKind(kind)
+                                    } label: {
+                                        if kind == account.defaultEntryKind {
+                                            Label(kind.title, systemImage: "checkmark")
+                                        } else {
+                                            Text(kind.title)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(account.defaultEntryKind.title)
+                                        .lineLimit(1)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 11)
+                                .frame(height: 36)
+                                .background(Color.primary.opacity(0.055))
+                                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(16)
+                        .memoryCard()
+                    }
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Уведомления")
@@ -727,6 +1477,40 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .memoryCard()
                         .accessibilityHint("Открывает выполненные напоминания")
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Голосовой ввод")
+                            .font(.system(size: 17, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 4)
+
+                        Button {
+                            isVoiceLabPresented = true
+                        } label: {
+                            HStack(spacing: 14) {
+                                profileSettingsIcon("waveform.badge.magnifyingglass")
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Voice Lab")
+                                        .font(.body.weight(.medium))
+                                    Text("Все настройки и тесты голосового ввода")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer(minLength: 10)
+
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(16)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .memoryCard()
+                        .accessibilityHint("Открывает лабораторию голосового ввода")
                     }
 
                     Spacer(minLength: 26)
@@ -908,6 +1692,16 @@ struct ContentView: View {
         }
     }
 
+    private func setDefaultEntryKind(_ kind: EntryKind) {
+        Task {
+            do {
+                try await account.setDefaultEntryKind(kind)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func setApplicationNotificationsEnabled(_ isEnabled: Bool) {
         applicationNotificationsEnabled = isEnabled
         ReminderScheduler.setApplicationNotificationsEnabled(isEnabled)
@@ -1020,10 +1814,12 @@ struct ContentView: View {
     private func navigateMobile(to section: MemorySection) {
         guard !isMobileProfilePresented else { return }
         guard selectedSection != section else { return }
-        dismissAppKeyboard()
-        isInboxPresented = false
-        withAnimation(.easeOut(duration: 0.16)) {
-            selectedSection = section
+        requestVoiceReviewExit {
+            dismissAppKeyboard()
+            isInboxPresented = false
+            withAnimation(.easeOut(duration: 0.16)) {
+                selectedSection = section
+            }
         }
     }
 
@@ -1045,10 +1841,12 @@ struct ContentView: View {
 
     private func openMobileProfile() {
         guard !isMobileProfilePresented else { return }
-        dismissAppKeyboard()
-        isMobileArchivePresented = false
-        withAnimation(.easeInOut(duration: 0.24)) {
-            isMobileProfilePresented = true
+        requestVoiceReviewExit {
+            dismissAppKeyboard()
+            isMobileArchivePresented = false
+            withAnimation(.easeInOut(duration: 0.24)) {
+                isMobileProfilePresented = true
+            }
         }
     }
 
@@ -1115,6 +1913,16 @@ struct ContentView: View {
         )
     }
 
+    private func batchConfirmation(count: Int) -> some View {
+        Text(count == 1 ? "Добавлена 1 запись" : count < 5
+            ? "Добавлены \(count) записи" : "Добавлено \(count) записей")
+            .font(.body.weight(.medium))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(.regularMaterial)
+            .clipShape(Capsule())
+    }
+
     private var sectionContent: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
@@ -1127,6 +1935,10 @@ struct ContentView: View {
                     QuickCaptureCard(
                         defaultPreset: .today,
                         isDocked: true,
+                        detailCommitSignal: detailedDraftCommitVersion,
+                        remoteVoiceInterpreter: remoteVoiceInterpreter,
+                        onOpenDetails: openDetailedDraft,
+                        onReviewBatch: presentVoiceBatch,
                         onAdd: addItem
                     )
                     .id("mac-main-composer")
@@ -1438,13 +2250,23 @@ struct ContentView: View {
         items.filter { $0.deletedAt == nil && $0.ownerID == account.userID }
     }
 
-    private var activeItems: [Item] { sorted(accountItems.filter { !$0.isCompleted && $0.dueDate != nil }) }
+    private var activeItems: [Item] {
+        sorted(accountItems.filter {
+            !$0.isCompleted && $0.dueDate != nil && !isPastEventArchived($0)
+        })
+    }
     private var overdueItems: [Item] {
-        activeItems.filter { ($0.dueDate ?? .distantFuture) < currentDate }
+        activeItems.filter {
+            if $0.isEvent { return false }
+            return ($0.dueDate ?? .distantFuture) < currentDate
+        }
     }
     private var todayItems: [Item] {
         activeItems.filter {
             guard let dueDate = $0.dueDate else { return false }
+            if $0.isEvent {
+                return eventOccursToday($0)
+            }
             return dueDate >= currentDate && Calendar.current.isDate(dueDate, inSameDayAs: currentDate)
         }
     }
@@ -1457,7 +2279,12 @@ struct ContentView: View {
         return activeItems.filter { ($0.dueDate ?? .distantPast) >= tomorrow }
     }
     private var completedItems: [Item] {
-        accountItems.filter(\.isCompleted).sorted { ($0.completedAt ?? $0.updatedAt) > ($1.completedAt ?? $1.updatedAt) }
+        accountItems
+            .filter { $0.isCompleted || isPastEventArchived($0) }
+            .sorted {
+                ($0.completedAt ?? $0.endDate ?? $0.dueDate ?? $0.updatedAt)
+                    > ($1.completedAt ?? $1.endDate ?? $1.dueDate ?? $1.updatedAt)
+            }
     }
 
     private var searchTextIsEmpty: Bool {
@@ -1465,7 +2292,9 @@ struct ContentView: View {
     }
 
     private var searchedActiveItems: [Item] {
-        sorted(accountItems.filter { !$0.isCompleted && matchesSearch($0) })
+        sorted(accountItems.filter {
+            !$0.isCompleted && !isPastEventArchived($0) && matchesSearch($0)
+        })
     }
 
     private var searchedDatedActiveItems: [Item] {
@@ -1473,7 +2302,9 @@ struct ContentView: View {
     }
 
     private var inboxItems: [Item] {
-        sorted(accountItems.filter { !$0.isCompleted && $0.dueDate == nil })
+        sorted(accountItems.filter {
+            !$0.isCompleted && !$0.isEvent && $0.dueDate == nil
+        })
     }
 
     private var searchedInboxItems: [Item] {
@@ -1522,21 +2353,28 @@ struct ContentView: View {
     }
 
     private func group(for item: Item) -> AllItemsGroup {
-        guard let dueDate = item.dueDate else { return .noDate }
+        AllItemsGroup.group(for: item, now: currentDate)
+    }
 
+    private func eventOccursToday(_ item: Item) -> Bool {
+        guard item.isEvent, let startDate = item.dueDate else { return false }
         let calendar = Calendar.current
-        if dueDate < currentDate { return .overdue }
-        if calendar.isDate(dueDate, inSameDayAs: currentDate) { return .today }
-        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: currentDate),
-           calendar.isDate(dueDate, inSameDayAs: tomorrow) {
-            return .tomorrow
-        }
-        let startOfToday = calendar.startOfDay(for: currentDate)
-        if let weekHorizon = calendar.date(byAdding: .day, value: 7, to: startOfToday),
-           dueDate < weekHorizon {
-            return .week
-        }
-        return .later
+        let today = calendar.startOfDay(for: currentDate)
+        let startDay = calendar.startOfDay(for: startDate)
+        let endDay = calendar.startOfDay(for: item.endDate ?? startDate)
+        return today >= startDay && today <= endDay
+    }
+
+    private func isPastEventArchived(_ item: Item) -> Bool {
+        guard item.isEvent, let startDate = item.dueDate else { return false }
+        let finalDate = item.endDate ?? startDate
+        let calendar = Calendar.current
+        let nextDay = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: finalDate)
+        ) ?? finalDate
+        return currentDate >= nextDay
     }
 
     private func sorted(_ source: [Item]) -> [Item] {
@@ -1554,34 +2392,343 @@ struct ContentView: View {
         Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
     }
 
-    private func addItem(title: String, details: String?, dueDate: Date?) {
+    @discardableResult
+    private func addItem(
+        title: String,
+        details: String?,
+        entryKind: EntryKind = .reminder,
+        dueDate: Date?,
+        endDate: Date? = nil,
+        reminderOffsets: [Int]? = nil
+    ) -> UUID? {
+        guard entryKind != .event || dueDate != nil else {
+            errorMessage = "Для события укажите дату и время начала."
+            return nil
+        }
         let item = Item(
             title: title,
             details: details,
             dueDate: dueDate,
-            reminderOffsets: dueDate == nil ? [] : [account.defaultReminderMinutes],
+            entryKind: entryKind,
+            endDate: endDate,
+            reminderOffsets: dueDate == nil
+                ? []
+                : (reminderOffsets ?? [account.defaultReminderMinutes]),
             ownerID: account.userID
         )
         withAnimation(.snappy) { modelContext.insert(item) }
-        guard saveChanges() else { return }
+        guard saveChanges() else { return nil }
         scheduleReminder(for: item)
         account.markLocalChange(modelContext: modelContext)
         showCaptureConfirmation(for: item)
+        return item.id
+    }
+
+    private func voiceReviewPage(_ session: VoiceBatchReviewSession) -> some View {
+        VoiceBatchReviewView(
+            session: session,
+            onCancel: { cancelVoiceReview(session.batch) },
+            onSave: { finishVoiceReview(session) },
+            header: {
+#if os(iOS)
+                mobilePrimaryHeader
+#else
+                EmptyView()
+#endif
+            }
+        )
+        .id(session.id)
+    }
+
+    private func presentVoiceBatch(_ batch: VoiceBatchReview) {
+        let candidate = VoiceBatchReviewSession(batch: batch)
+        let presented = candidate.canSave
+            ? (persistVoiceBatch(batch.entries, referenceDate: batch.referenceDate) ?? batch)
+            : batch
+        recentlyAddedItem = nil
+        recentlyAddedBatchCount = nil
+        editingItem = nil
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+            voiceReviewSession = VoiceBatchReviewSession(batch: presented)
+        }
+    }
+
+    private func requestVoiceReviewExit(_ action: @escaping () -> Void) {
+        guard let session = voiceReviewSession else {
+            action()
+            return
+        }
+        if session.hasChanges || session.selectedEntryID != nil || !session.batch.isPersisted {
+            pendingReviewNavigation = action
+            isReviewExitConfirmationPresented = true
+        } else {
+            dismissVoiceReview()
+            action()
+        }
+    }
+
+    private func completeReviewNavigation() {
+        let action = pendingReviewNavigation
+        pendingReviewNavigation = nil
+        action?()
+    }
+
+    private func finishVoiceReview(_ session: VoiceBatchReviewSession) -> Bool {
+        if VoiceReviewTesting.isEnabled {
+            dismissVoiceReview()
+            return true
+        }
+        let entries = session.entries
+        let batch = session.batch
+        let savedEntries: [VoiceReviewEntry]
+        if batch.isPersisted {
+            if entries != batch.entries,
+               !updateVoiceBatch(entries, original: batch.entries) {
+                return false
+            }
+            savedEntries = entries
+        } else {
+            guard let persisted = persistVoiceBatch(entries, referenceDate: batch.referenceDate),
+                  persisted.isPersisted else {
+                return false
+            }
+            savedEntries = persisted.entries
+        }
+        for entry in savedEntries {
+            guard let itemID = entry.persistedItemID else { continue }
+            let correctedDetails = Item.normalizedDetails(entry.details)
+            if entry.title != entry.originalDraft.title
+                || correctedDetails != entry.originalDraft.details
+                || entry.dueDate != entry.originalDraft.dueDate {
+                VoicePersonalizationStore.confirmCorrection(
+                    itemID: itemID,
+                    title: entry.title,
+                    details: correctedDetails,
+                    dueDate: entry.dueDate
+                )
+            }
+        }
+        dismissVoiceReview()
+        return true
+    }
+
+    private func cancelVoiceReview(_ batch: VoiceBatchReview) {
+        if VoiceReviewTesting.isEnabled {
+            dismissVoiceReview()
+            return
+        }
+        guard !batch.isPersisted || cancelVoiceBatch(batch.entries) else { return }
+        dismissVoiceReview()
+    }
+
+    private func dismissVoiceReview() {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+            voiceReviewSession = nil
+        }
+    }
+
+    private func persistVoiceBatch(
+        _ entries: [VoiceReviewEntry],
+        referenceDate: Date
+    ) -> VoiceBatchReview? {
+        guard let itemIDs = addVoiceBatch(entries), itemIDs.count == entries.count else {
+            return nil
+        }
+        let persisted = zip(entries, itemIDs).map { entry, itemID -> VoiceReviewEntry in
+            var value = entry
+            value.persistedItemID = itemID
+            VoicePersonalizationStore.beginCapture(
+                itemID: itemID,
+                transcript: entry.sourceText,
+                title: entry.originalDraft.title,
+                details: entry.originalDraft.details,
+                dueDate: entry.originalDraft.dueDate,
+                referenceDate: referenceDate
+            )
+            return value
+        }
+        return VoiceBatchReview(referenceDate: referenceDate, entries: persisted)
+    }
+
+    private func addVoiceBatch(_ entries: [VoiceReviewEntry]) -> [UUID]? {
+        guard !entries.isEmpty,
+              entries.allSatisfy({ !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                  && ($0.kind != .event || $0.dueDate != nil)
+                  && ($0.endDate == nil || ($0.dueDate != nil && $0.endDate! >= $0.dueDate!)) }) else {
+            return nil
+        }
+        let newItems = entries.map { entry in
+            Item(
+                title: entry.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                details: entry.details,
+                dueDate: entry.dueDate,
+                entryKind: entry.kind,
+                endDate: entry.kind == .event ? entry.endDate : nil,
+                reminderOffsets: entry.dueDate == nil ? [] : entry.reminderOffsets,
+                ownerID: account.userID
+            )
+        }
+        withAnimation(.snappy) {
+            newItems.forEach(modelContext.insert)
+        }
+        guard saveChanges() else { return nil }
+        newItems.forEach(scheduleReminder)
+        account.markLocalChange(modelContext: modelContext)
+#if os(macOS)
+        if isDesktopComposerPresented {
+            withAnimation(.easeInOut(duration: 0.2)) { isDesktopComposerPresented = false }
+        }
+#endif
+        return newItems.map(\.id)
+    }
+
+    private func updateVoiceBatch(
+        _ entries: [VoiceReviewEntry],
+        original: [VoiceReviewEntry]
+    ) -> Bool {
+        guard !entries.isEmpty,
+              entries.allSatisfy({
+                  $0.persistedItemID != nil
+                      && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                      && ($0.kind != .event || $0.dueDate != nil)
+                      && ($0.endDate == nil || ($0.dueDate != nil && $0.endDate! >= $0.dueDate!))
+              }),
+              let stored = storedVoiceBatchItems(original) else {
+            errorMessage = "Не удалось найти сохранённые записи для редактирования."
+            return false
+        }
+
+        let edited = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
+            entry.persistedItemID.map { ($0, entry) }
+        })
+        let removedIDs = original.compactMap(\.persistedItemID).filter { edited[$0] == nil }
+        for (id, item) in stored {
+            guard let entry = edited[id] else {
+                item.markDeleted()
+                continue
+            }
+            item.title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            item.details = Item.normalizedDetails(entry.details)
+            item.entryKind = entry.kind
+            item.dueDate = entry.dueDate
+            item.endDate = entry.kind == .event ? entry.endDate : nil
+            item.setReminderOffsets(entry.dueDate == nil ? [] : entry.reminderOffsets)
+            item.updatedAt = .now
+        }
+        guard saveChanges() else { return false }
+        stored.values.forEach(scheduleReminder)
+        VoicePersonalizationStore.discardCaptures(for: removedIDs)
+        account.markLocalChange(modelContext: modelContext)
+        return true
+    }
+
+    private func cancelVoiceBatch(_ entries: [VoiceReviewEntry]) -> Bool {
+        guard let stored = storedVoiceBatchItems(entries) else {
+            errorMessage = "Не удалось найти записи для отмены."
+            return false
+        }
+        stored.values.forEach { $0.markDeleted() }
+        guard saveChanges() else { return false }
+        let ids = Array(stored.keys)
+        for id in ids {
+            ReminderScheduler.cancel(id: id)
+        }
+        VoicePersonalizationStore.discardCaptures(for: ids)
+        account.markLocalChange(modelContext: modelContext)
+        return true
+    }
+
+    private func storedVoiceBatchItems(_ entries: [VoiceReviewEntry]) -> [UUID: Item]? {
+        let ids = Set(entries.compactMap(\.persistedItemID))
+        guard ids.count == entries.count,
+              let stored = try? modelContext.fetch(FetchDescriptor<Item>()) else {
+            return nil
+        }
+        let matching = stored.filter { ids.contains($0.id) && $0.deletedAt == nil }
+        guard matching.count == ids.count else { return nil }
+        return Dictionary(uniqueKeysWithValues: matching.map { ($0.id, $0) })
+    }
+
+    private func openDetailedDraft(
+        title: String,
+        details: String?,
+        entryKind: EntryKind,
+        dueDate: Date?,
+        endDate: Date?
+    ) {
+        let startDate = dueDate ?? (entryKind == .event ? Self.defaultEventStartDate : nil)
+        let draft = Item(
+            title: title,
+            details: details,
+            dueDate: startDate,
+            entryKind: entryKind,
+            endDate: entryKind == .event ? endDate : nil,
+            reminderOffsets: startDate == nil ? [] : [account.defaultReminderMinutes],
+            ownerID: account.userID
+        )
+
+        dismissKeyboardIfAvailable()
+#if os(macOS)
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+            isDesktopComposerPresented = false
+            isEditingNewDesktopItem = true
+            editingItem = draft
+        }
+#else
+        draftEditingItem = draft
+#endif
+    }
+
+    private static var defaultEventStartDate: Date {
+        let calendar = Calendar.current
+        let candidate = calendar.date(byAdding: .hour, value: 1, to: .now) ?? .now.addingTimeInterval(3_600)
+        return calendar.date(bySetting: .minute, value: 0, of: candidate) ?? candidate
+    }
+
+    private func dismissKeyboardIfAvailable() {
+#if os(iOS)
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+#endif
+    }
+
+    private var remoteVoiceInterpreter: (String, Date, Calendar) async throws -> VoiceCaptureResult {
+        { transcript, now, calendar in
+            try await account.interpretVoiceRemotely(
+                transcript,
+                now: now,
+                calendar: calendar
+            )
+        }
     }
 
     private func update(
         _ item: Item,
         title: String,
         details: String?,
+        entryKind: EntryKind,
         dueDate: Date?,
+        endDate: Date?,
         reminderOffsets: [Int]
     ) {
         item.title = title
         item.details = Item.normalizedDetails(details)
+        item.entryKind = entryKind
         item.dueDate = dueDate
+        item.endDate = entryKind == .event ? endDate : nil
         item.setReminderOffsets(dueDate == nil ? [] : reminderOffsets)
         item.updatedAt = .now
         guard saveChanges() else { return }
+        VoicePersonalizationStore.confirmCorrection(
+            itemID: item.id,
+            title: item.title,
+            details: item.details,
+            dueDate: item.dueDate
+        )
         scheduleReminder(for: item)
         account.markLocalChange(modelContext: modelContext)
     }
@@ -1589,6 +2736,7 @@ struct ContentView: View {
     private func showCaptureConfirmation(for item: Item) {
         let itemID = item.id
         withAnimation(.snappy) {
+            recentlyAddedBatchCount = nil
             recentlyAddedItem = item
         }
 
@@ -1597,6 +2745,22 @@ struct ContentView: View {
             guard recentlyAddedItem?.id == itemID else { return }
             withAnimation(.easeOut(duration: 0.2)) {
                 recentlyAddedItem = nil
+            }
+        }
+    }
+
+    private func showBatchConfirmation(count: Int) {
+        batchConfirmationVersion += 1
+        let version = batchConfirmationVersion
+        withAnimation(.snappy) {
+            recentlyAddedItem = nil
+            recentlyAddedBatchCount = count
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard batchConfirmationVersion == version else { return }
+            withAnimation(.easeOut(duration: 0.2)) {
+                recentlyAddedBatchCount = nil
             }
         }
     }
@@ -1637,12 +2801,14 @@ struct ContentView: View {
         }
         let id = item.id
         let title = item.title
+        let details = item.details
         let offsets = item.effectiveReminderOffsets
         Task {
             do {
                 try await ReminderScheduler.schedule(
                     id: id,
                     title: title,
+                    details: details,
                     at: date,
                     offsets: offsets
                 )
@@ -1720,16 +2886,106 @@ private enum QuickDuePreset: String, CaseIterable, Identifiable {
     }
 }
 
+enum EntryKindInference {
+    static func infer(from text: String, hasDate: Bool) -> EntryKind? {
+        let normalized = text
+            .lowercased(with: Locale(identifier: "ru_RU"))
+            .replacingOccurrences(of: "ё", with: "е")
+        let hasExplicitRange = normalized.contains(" с ")
+            && (normalized.contains(" до ")
+                || normalized.contains(" по ")
+                || normalized.contains("—")
+                || normalized.contains("–"))
+        let actionMarkers = [
+            "надо ", "нужно ", "не забыть", "напомни", "напомнить"
+        ]
+        let actionStems = [
+            "купит", "сдела", "отправ", "позвон", "напис", "забрат",
+            "оплат", "провер", "подготов", "подат", "заказ", "записат",
+            "зайти", "сходить", "получит", "вернут", "доработ", "закончит"
+        ]
+        let eventPhrases = [
+            "встреча", "встречу", "встретиться", "созвон", "вебинар",
+            "концерт", "прием", "трениров", "занят", "лекци", "урок",
+            "сеанс", "бронь", "перелет", "рейс", "поездка", "отпуск",
+            "конференц", "мероприят", "собеседован", "экзамен",
+            "день рождения", "годовщина"
+        ]
+        let hasAction = actionMarkers.contains(where: normalized.contains)
+            || actionStems.contains(where: normalized.contains)
+        let hasEventNoun = eventPhrases.contains(where: normalized.contains)
+
+        if hasAction && !normalized.contains("встретиться") {
+            return .reminder
+        }
+        if hasEventNoun {
+            return .event
+        }
+        if hasDate && hasExplicitRange {
+            return .event
+        }
+        return nil
+    }
+}
+
 private enum QuickCaptureFocus: Hashable {
     case title
     case description
 }
 
+private enum QuickCapturePresentation {
+    case standard
+#if os(macOS)
+    case desktopWorkspace
+    case desktopInline
+#endif
+}
+
+private struct PendingVoiceClarification {
+    let decision: VoiceClarificationDecision
+    let draft: ReminderDraft
+    let details: String?
+    let fallbackDate: Date?
+    let referenceDate: Date
+}
+
+private struct VoiceClarificationOption: Identifiable {
+    let id: String
+    let title: String
+    let caption: String?
+    let dueDate: Date?
+}
+
+private struct QuickCaptureSurfaceModifier: ViewModifier {
+    let isMinimal: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isMinimal {
+            content
+                .background(Color.primary.opacity(0.035))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        } else {
+            content.memoryCard()
+        }
+    }
+}
+
 private struct QuickCaptureCard: View {
+    @EnvironmentObject private var account: AccountSyncController
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var voiceInput = VoiceInputController()
+    @AppStorage(VoicePipelineSettings.structuredInterpreterEnabledKey)
+    private var isStructuredInterpreterEnabled = false
+    @AppStorage(VoicePipelineSettings.deepSeekInterpreterEnabledKey)
+    private var isDeepSeekInterpreterEnabled = false
+    @AppStorage(VoicePipelineSettings.clarificationEnabledKey)
+    private var isVoiceClarificationEnabled = true
     @State private var draft = ""
     @State private var preset: QuickDuePreset
     @State private var ignoredSmartExpression: String?
+    @State private var ignoredKindExpression: String?
+    @State private var entryKindOverride: EntryKind?
     @State private var smartResult: ParsedMemoryInput?
     @State private var details = ""
     @State private var isDescriptionPresented = false
@@ -1738,11 +2994,14 @@ private struct QuickCaptureCard: View {
     @State private var voiceSubmissionTask: Task<Void, Never>?
     @State private var shouldSubmitVoiceWhenStopped = false
     @State private var isFinalizingVoiceSubmission = false
+    @State private var voiceProcessingStartedAt = Date.now
+    @State private var pendingVoiceClarification: PendingVoiceClarification?
     @State private var isRecordsComposerPresented = false
     @Namespace private var homeComposerNamespace
     @Namespace private var captureChromeNamespace
     @FocusState private var focusedField: QuickCaptureFocus?
     let defaultPreset: QuickDuePreset
+    let presentation: QuickCapturePresentation
     let isDocked: Bool
     let isHome: Bool
     let isRecordsPage: Bool
@@ -1750,13 +3009,20 @@ private struct QuickCaptureCard: View {
     let priorityItem: Item?
     let isPriorityOverdue: Bool
     let additionalPriorityCount: Int
+    let autofocus: Bool
+    let detailCommitSignal: Int
+    let remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)?
     let onTogglePriority: () -> Void
     let onEditPriority: () -> Void
     let onShowAll: () -> Void
-    let onAdd: (String, String?, Date?) -> Void
+    let onDismiss: () -> Void
+    let onOpenDetails: (String, String?, EntryKind, Date?, Date?) -> Void
+    let onReviewBatch: (VoiceBatchReview) -> Void
+    let onAdd: (String, String?, EntryKind, Date?, Date?, [Int]?) -> UUID?
 
     init(
         defaultPreset: QuickDuePreset,
+        presentation: QuickCapturePresentation = .standard,
         isDocked: Bool = false,
         isHome: Bool = false,
         isRecordsPage: Bool = false,
@@ -1764,13 +3030,20 @@ private struct QuickCaptureCard: View {
         priorityItem: Item? = nil,
         isPriorityOverdue: Bool = false,
         additionalPriorityCount: Int = 0,
+        autofocus: Bool = false,
+        detailCommitSignal: Int = 0,
+        remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)? = nil,
         onTogglePriority: @escaping () -> Void = {},
         onEditPriority: @escaping () -> Void = {},
         onShowAll: @escaping () -> Void = {},
-        onAdd: @escaping (String, String?, Date?) -> Void
+        onDismiss: @escaping () -> Void = {},
+        onOpenDetails: @escaping (String, String?, EntryKind, Date?, Date?) -> Void = { _, _, _, _, _ in },
+        onReviewBatch: @escaping (VoiceBatchReview) -> Void = { _ in },
+        onAdd: @escaping (String, String?, EntryKind, Date?, Date?, [Int]?) -> UUID?
     ) {
         _preset = State(initialValue: defaultPreset)
         self.defaultPreset = defaultPreset
+        self.presentation = presentation
         self.isDocked = isDocked
         self.isHome = isHome
         self.isRecordsPage = isRecordsPage
@@ -1778,14 +3051,29 @@ private struct QuickCaptureCard: View {
         self.priorityItem = priorityItem
         self.isPriorityOverdue = isPriorityOverdue
         self.additionalPriorityCount = additionalPriorityCount
+        self.autofocus = autofocus
+        self.detailCommitSignal = detailCommitSignal
+        self.remoteVoiceInterpreter = remoteVoiceInterpreter
         self.onTogglePriority = onTogglePriority
         self.onEditPriority = onEditPriority
         self.onShowAll = onShowAll
+        self.onDismiss = onDismiss
+        self.onOpenDetails = onOpenDetails
+        self.onReviewBatch = onReviewBatch
         self.onAdd = onAdd
     }
 
     var body: some View {
         Group {
+#if os(macOS)
+            if presentation == .desktopWorkspace {
+                desktopCaptureBody
+            } else if isHome {
+                homeBody
+            } else {
+                compactBody
+            }
+#else
             if isHome {
                 ZStack {
                     if isRecordsPage {
@@ -1800,9 +3088,27 @@ private struct QuickCaptureCard: View {
             } else {
                 compactBody
             }
+#endif
+        }
+        .overlay(alignment: .bottom) {
+            if isHome,
+               isRecordsPage,
+               !isRecordsComposerPresented,
+               !externalKeyboardVisible,
+               !voiceInput.isListening,
+               !isFinalizingVoiceSubmission,
+               pendingVoiceClarification == nil {
+                sharedCaptureChrome
+                    .frame(maxWidth: .infinity)
+                    .transition(.scale(scale: 0.86, anchor: .bottomTrailing).combined(with: .opacity))
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 18) {
-            if isHome && !voiceInput.isListening && !isFinalizingVoiceSubmission {
+            if isHome,
+               (!isRecordsPage || isRecordsComposerPresented),
+               !voiceInput.isListening,
+               !isFinalizingVoiceSubmission,
+               pendingVoiceClarification == nil {
                 sharedCaptureChrome
                     .frame(maxWidth: .infinity)
                     .background {
@@ -1813,6 +3119,8 @@ private struct QuickCaptureCard: View {
         }
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)
         .animation(.spring(response: 0.52, dampingFraction: 0.88), value: voiceInput.isListening)
+        .animation(.easeInOut(duration: 0.28), value: isFinalizingVoiceSubmission)
+        .animation(.spring(response: 0.42, dampingFraction: 0.9), value: pendingVoiceClarification != nil)
         .animation(.easeInOut(duration: 0.22), value: isDescriptionPresented)
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: isComposerExpanded)
         .onChange(of: draft) { oldValue, newValue in
@@ -1824,6 +3132,12 @@ private struct QuickCaptureCard: View {
             }
 
             smartParsingTask?.cancel()
+            if isVoicePreviewActive,
+               VoiceCapturePreview.classify(newValue) != .single {
+                // One inferred date/type must not describe an uncertain batch.
+                smartResult = nil
+                return
+            }
             smartParsingTask = Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(voiceInput.isListening ? 160 : 70))
                 guard !Task.isCancelled else { return }
@@ -1833,11 +3147,20 @@ private struct QuickCaptureCard: View {
                     : NaturalLanguageDateParser.parse(trimmed)
             }
         }
+        .onAppear {
+            guard autofocus else { return }
+            DispatchQueue.main.async {
+                focusedField = .title
+            }
+        }
         .onChange(of: details) { oldValue, newValue in
             guard !voiceInput.isListening,
                   Self.isSingleInsertedLineBreak(from: oldValue, to: newValue) else { return }
             details = oldValue
             submit()
+        }
+        .onChange(of: detailCommitSignal) { _, _ in
+            resetAfterDetailedCommit()
         }
         .onChange(of: voiceInput.transcript) { _, newValue in
             guard !newValue.isEmpty else { return }
@@ -1854,14 +3177,15 @@ private struct QuickCaptureCard: View {
             } else {
                 withAnimation(.easeOut(duration: 0.35)) { isVoicePulsing = false }
                 if wasListening && shouldSubmitVoiceWhenStopped {
+                    voiceProcessingStartedAt = .now
                     isFinalizingVoiceSubmission = true
                     voiceSubmissionTask?.cancel()
                     voiceSubmissionTask = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(70))
+                        await Task.yield()
                         guard !Task.isCancelled,
                               shouldSubmitVoiceWhenStopped,
                               !voiceInput.isListening else { return }
-                        submitVoiceRecording()
+                        await submitVoiceRecording()
                         shouldSubmitVoiceWhenStopped = false
                         withAnimation(.easeOut(duration: 0.2)) {
                             isFinalizingVoiceSubmission = false
@@ -1886,6 +3210,7 @@ private struct QuickCaptureCard: View {
             voiceSubmissionTask?.cancel()
             smartParsingTask?.cancel()
             voiceInput.stop()
+            pendingVoiceClarification = nil
         }
         .alert("Голосовой ввод", isPresented: isShowingVoiceError) {
             Button("OK", role: .cancel) {}
@@ -1893,6 +3218,7 @@ private struct QuickCaptureCard: View {
             Text(voiceInput.errorMessage ?? "Не удалось распознать речь.")
         }
     }
+
 
     @ViewBuilder private var sharedCaptureChrome: some View {
         if isRecordsPage && !isRecordsComposerPresented {
@@ -1936,24 +3262,99 @@ private struct QuickCaptureCard: View {
         }
     }
 
+#if os(macOS)
+    private var desktopCaptureBody: some View {
+        VStack(spacing: 28) {
+            desktopOrbCluster(size: 164)
+            compactBody
+                .frame(maxWidth: 540)
+                .opacity(isFinalizingVoiceSubmission || pendingVoiceClarification != nil ? 0 : 1)
+                .allowsHitTesting(!isFinalizingVoiceSubmission && pendingVoiceClarification == nil)
+                .accessibilityHidden(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 18)
+        .padding(.horizontal, 28)
+    }
+
+    private func desktopOrbCluster(size: CGFloat) -> some View {
+        VStack(spacing: 18) {
+            Button(action: handleVoiceTap) {
+                GlassVoiceOrb(
+                    isListening: voiceInput.isListening,
+                    isProcessing: isFinalizingVoiceSubmission,
+                    isPulsing: isVoicePulsing || isFinalizingVoiceSubmission,
+                    size: size
+                )
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
+            .accessibilityLabel(voiceOrbAccessibilityLabel)
+
+            Group {
+                if pendingVoiceClarification != nil {
+                    voiceClarificationCard
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if isFinalizingVoiceSubmission {
+                    voiceProcessingStatus
+                        .transition(.opacity)
+                } else {
+                    VStack(spacing: 5) {
+                        Text(voiceInput.isListening ? "Говорите…" : "Что нужно запомнить?")
+                            .font(.system(size: 19, weight: .medium, design: .rounded))
+                            .multilineTextAlignment(.center)
+
+                        Text(voiceInput.isListening ? "Нажмите на сферу, чтобы закончить" : "Голосом или текстом")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .transition(.opacity)
+                }
+            }
+        }
+    }
+#endif
+
     private var compactBody: some View {
         VStack(alignment: .leading, spacing: isDocked ? 10 : 14) {
             HStack(spacing: isDocked ? 10 : 12) {
-                if isDocked {
-                    voiceButton(size: 44)
+                if presentation != .standard && !voiceInput.isListening {
+                    Button(action: submit) {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(trimmedDraft.isEmpty ? Color.secondary : Color.white)
+                            .frame(width: compactControlSize, height: compactControlSize)
+                            .background(
+                                trimmedDraft.isEmpty
+                                    ? Color.secondary.opacity(0.1)
+                                    : MemoryTheme.accent
+                            )
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(trimmedDraft.isEmpty)
+                    .accessibilityLabel("Добавить напоминание")
+                } else if isDocked {
+                    voiceButton(size: compactControlSize)
                 } else {
                     Image(systemName: "plus")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(MemoryTheme.accent)
-                        .frame(width: 34, height: 34)
+                        .frame(width: compactControlSize, height: compactControlSize)
                         .background(MemoryTheme.accent.opacity(0.12))
                         .clipShape(Circle())
                 }
 
-                TextField("Что нужно запомнить?", text: $draft, axis: .vertical)
+                TextField(
+                    voiceInput.isListening ? "Говорите…" : "Что нужно запомнить?",
+                    text: $draft,
+                    axis: .vertical
+                )
                     .textFieldStyle(.plain)
-                    .lineLimit(1...2)
+                    .lineLimit(1...(voiceInput.isListening ? 4 : 2))
                     .focused($focusedField, equals: .title)
+                    .allowsHitTesting(!voiceInput.isListening)
                     .accessibilityIdentifier("quickCaptureField")
                     .onSubmit(handleSubmitKey)
 #if os(iOS)
@@ -1961,17 +3362,21 @@ private struct QuickCaptureCard: View {
                     .textInputAutocapitalization(.sentences)
 #endif
 
-                if !isDocked {
-                    voiceButton(size: 34)
+                if !isDocked && presentation == .standard {
+                    voiceButton(size: compactControlSize)
                 }
 
-                if !trimmedDraft.isEmpty {
+                if !voiceInput.isListening && isComposerExpanded {
+                    detailsDisclosureButton(size: compactControlSize)
+                }
+
+                if showsCancelButton {
                     Button(action: cancelDraft) {
                         Image(systemName: "xmark")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.secondary)
-                            .frame(width: isDocked ? 40 : 34, height: isDocked ? 40 : 34)
-                            .background(Color.secondary.opacity(0.1))
+                            .frame(width: compactControlSize, height: compactControlSize)
+                            .background(Color.secondary.opacity(0.09))
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -1980,47 +3385,7 @@ private struct QuickCaptureCard: View {
                 }
             }
 
-            if let smartResult {
-                HStack(spacing: 11) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(MemoryTheme.accent)
-                        .frame(width: 28, height: 28)
-                        .background(MemoryTheme.accent.opacity(0.12))
-                        .clipShape(Circle())
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(smartDateLabel(for: smartResult.dueDate))
-                            .font(.caption.weight(.semibold))
-                        if smartResult.title != trimmedDraft {
-                            Text("Сохранится: \(smartResult.title)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Spacer()
-
-                    Button {
-                        ignoredSmartExpression = draft
-                        self.smartResult = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Не распознавать дату")
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(MemoryTheme.accent.opacity(0.075))
-                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-                .accessibilityIdentifier("smartDateSuggestion")
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            captureMetadataChips
 
             if isDescriptionPresented {
                 TextField("Описание, ссылка или важные детали", text: $details, axis: .vertical)
@@ -2043,59 +3408,9 @@ private struct QuickCaptureCard: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            if !isDocked || isComposerExpanded {
-                Divider().opacity(0.55)
-                HStack(spacing: 6) {
-                    ForEach(QuickDuePreset.allCases) { option in
-                        Button {
-                            preset = option
-                            ignoredSmartExpression = draft
-                            smartResult = nil
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: option.icon)
-                                    .font(.system(size: 12, weight: .medium))
-                                Text(option.title)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.72)
-                                    .allowsTightening(true)
-                            }
-                                .font(.caption.weight(.medium))
-                                .padding(.horizontal, 7)
-                                .frame(maxWidth: .infinity, minHeight: 34)
-                                .background(isSelected(option) ? MemoryTheme.accent.opacity(0.13) : Color.secondary.opacity(0.08))
-                                .foregroundStyle(isSelected(option) ? MemoryTheme.accent : Color.secondary).clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .frame(maxWidth: .infinity)
-                    }
-
-                    Button {
-                        toggleDescription()
-                    } label: {
-                        Image(systemName: "text.alignleft")
-                            .font(.system(size: 13, weight: .semibold))
-                            .frame(width: 34, height: 34)
-                            .background(
-                                (isDescriptionPresented || !trimmedDetails.isEmpty)
-                                    ? MemoryTheme.accent.opacity(0.13)
-                                    : Color.secondary.opacity(0.08)
-                            )
-                            .foregroundStyle(
-                                (isDescriptionPresented || !trimmedDetails.isEmpty)
-                                    ? MemoryTheme.accent
-                                    : Color.secondary
-                            )
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(isDescriptionPresented ? "Скрыть описание" : "Добавить описание")
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
         }
-        .padding(isDocked ? 12 : 18)
-        .memoryCard()
+        .padding(usesMinimalDesktopChrome ? 12 : (isDocked ? 12 : 18))
+        .modifier(QuickCaptureSurfaceModifier(isMinimal: usesMinimalDesktopChrome))
     }
 
     private var homeBody: some View {
@@ -2117,12 +3432,24 @@ private struct QuickCaptureCard: View {
                             .lineLimit(3)
                             .minimumScaleFactor(0.78)
                             .frame(maxWidth: 380)
-                            .opacity(voiceInput.isListening || isEditing || isFinalizingVoiceSubmission ? 0 : 1)
+                            .opacity(
+                                voiceInput.isListening
+                                    || isEditing
+                                    || isFinalizingVoiceSubmission
+                                    || pendingVoiceClarification != nil
+                                    ? 0 : 1
+                            )
 
-                        if voiceInput.isListening {
+                        if pendingVoiceClarification != nil {
+                            voiceClarificationCard
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        } else if voiceInput.isListening {
                             homeComposer
                                 .matchedGeometryEffect(id: "homeComposer", in: homeComposerNamespace)
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
+                        } else if isFinalizingVoiceSubmission {
+                            voiceProcessingStatus
+                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
                         }
                     }
                     .frame(height: 180, alignment: .top)
@@ -2134,8 +3461,15 @@ private struct QuickCaptureCard: View {
                         homePrioritySection
                     }
                 }
-                .opacity(voiceInput.isListening || isFinalizingVoiceSubmission ? 0 : 1)
-                .allowsHitTesting(!voiceInput.isListening && !isFinalizingVoiceSubmission)
+                .opacity(
+                    voiceInput.isListening || isFinalizingVoiceSubmission || pendingVoiceClarification != nil
+                        ? 0 : 1
+                )
+                .allowsHitTesting(
+                    !voiceInput.isListening
+                        && !isFinalizingVoiceSubmission
+                        && pendingVoiceClarification == nil
+                )
             }
             .frame(maxWidth: 620)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2152,13 +3486,181 @@ private struct QuickCaptureCard: View {
         Button(action: handleHomeVoiceTap) {
             GlassVoiceOrb(
                 isListening: voiceInput.isListening,
-                isPulsing: isVoicePulsing,
+                isProcessing: isFinalizingVoiceSubmission,
+                isPulsing: isVoicePulsing || isFinalizingVoiceSubmission,
                 size: orbSize
             )
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(voiceInput.isListening ? "Остановить запись" : "Начать голосовой ввод")
+        .disabled(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
+        .accessibilityLabel(voiceOrbAccessibilityLabel)
+    }
+
+    private var voiceProcessingStatus: some View {
+        VStack(spacing: 6) {
+            if reduceMotion {
+                processingStatusText(processingMessages[0])
+            } else {
+                TimelineView(.periodic(from: voiceProcessingStartedAt, by: 1.05)) { context in
+                    let elapsed = max(0, context.date.timeIntervalSince(voiceProcessingStartedAt))
+                    let index = Int(elapsed / 1.05) % processingMessages.count
+                    processingStatusText(processingMessages[index])
+                        .id(index)
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.24), value: index)
+                }
+            }
+
+            Text("Собираю заголовок, контекст и время")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: 380)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Вникаю в контекст. Собираю заголовок, контекст и время")
+    }
+
+    private func processingStatusText(_ value: String) -> some View {
+        Text(value)
+            .font(.system(size: 19, weight: .medium, design: .rounded))
+            .multilineTextAlignment(.center)
+    }
+
+    @ViewBuilder private var voiceClarificationCard: some View {
+        if let pendingVoiceClarification {
+            VStack(spacing: 12) {
+                VStack(spacing: 4) {
+                    Text(
+                        pendingVoiceClarification.decision == .time
+                            ? "Во сколько напомнить?"
+                            : "Когда напомнить?"
+                    )
+                    .font(.system(size: 19, weight: .medium, design: .rounded))
+
+                    Text(pendingVoiceClarification.draft.title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .multilineTextAlignment(.center)
+
+                HStack(spacing: 8) {
+                    ForEach(clarificationOptions(for: pendingVoiceClarification)) { option in
+                        Button {
+                            resolveVoiceClarification(option)
+                        } label: {
+                            VStack(spacing: 2) {
+                                Text(option.title)
+                                    .font(.caption.weight(.semibold))
+                                if let caption = option.caption {
+                                    Text(caption)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 42)
+                            .padding(.horizontal, 6)
+                            .background(Color.secondary.opacity(0.085))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: 430)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+            }
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private func clarificationOptions(
+        for clarification: PendingVoiceClarification
+    ) -> [VoiceClarificationOption] {
+        switch clarification.decision {
+        case .date:
+            return [
+                VoiceClarificationOption(
+                    id: "today",
+                    title: "Сегодня",
+                    caption: QuickDuePreset.today.date.map(shortTime),
+                    dueDate: QuickDuePreset.today.date
+                ),
+                VoiceClarificationOption(
+                    id: "tomorrow",
+                    title: "Завтра",
+                    caption: QuickDuePreset.tomorrow.date.map(shortTime),
+                    dueDate: QuickDuePreset.tomorrow.date
+                ),
+                VoiceClarificationOption(
+                    id: "none",
+                    title: "Без срока",
+                    caption: nil,
+                    dueDate: nil
+                )
+            ]
+        case .time:
+            return [
+                timeClarificationOption(id: "morning", title: "Утром", hour: 8, clarification: clarification),
+                timeClarificationOption(id: "lunch", title: "В обед", hour: 13, clarification: clarification),
+                timeClarificationOption(id: "evening", title: "Вечером", hour: 19, clarification: clarification)
+            ]
+        }
+    }
+
+    private func timeClarificationOption(
+        id: String,
+        title: String,
+        hour: Int,
+        clarification: PendingVoiceClarification
+    ) -> VoiceClarificationOption {
+        let calendar = Calendar.current
+        let baseDate = clarification.draft.dueDate ?? clarification.referenceDate
+        var date = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: baseDate)
+        if clarification.draft.dueDate == nil,
+           let candidate = date,
+           candidate <= clarification.referenceDate {
+            date = calendar.date(byAdding: .day, value: 1, to: candidate)
+        }
+        return VoiceClarificationOption(
+            id: id,
+            title: title,
+            caption: date.map(shortTime),
+            dueDate: date
+        )
+    }
+
+    private func shortTime(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private func resolveVoiceClarification(_ option: VoiceClarificationOption) {
+        guard let clarification = pendingVoiceClarification else { return }
+        commitVoiceDraft(
+            clarification.draft,
+            details: clarification.details,
+            dueDate: option.dueDate,
+            referenceDate: clarification.referenceDate
+        )
+        withAnimation(.easeOut(duration: 0.2)) {
+            pendingVoiceClarification = nil
+        }
+    }
+
+    private var processingMessages: [String] {
+        ["Вникаю в контекст…", "Отделяю главное…", "Уточняю время…"]
+    }
+
+    private var voiceOrbAccessibilityLabel: String {
+        if isFinalizingVoiceSubmission { return "Вникаю в контекст" }
+        return voiceInput.isListening ? "Остановить запись" : "Начать голосовой ввод"
     }
 
     private var homePrioritySection: some View {
@@ -2250,6 +3752,8 @@ private struct QuickCaptureCard: View {
                     .contentTransition(.interpolate)
 
                 if !voiceInput.isListening && (focusedField == .title || !trimmedDraft.isEmpty) {
+                    detailsDisclosureButton(size: 40)
+
                     Button(action: cancelDraft) {
                         Image(systemName: "xmark")
                             .font(.system(size: 12, weight: .bold))
@@ -2264,33 +3768,7 @@ private struct QuickCaptureCard: View {
                 }
             }
 
-            if let smartResult {
-                HStack(spacing: 9) {
-                    Image(systemName: "sparkles")
-                        .font(.caption.weight(.semibold))
-                    Text(smartDateLabel(for: smartResult.dueDate))
-                        .font(.caption.weight(.semibold))
-                    Spacer(minLength: 4)
-                    if !voiceInput.isListening {
-                        Button {
-                            ignoredSmartExpression = draft
-                            self.smartResult = nil
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.caption2.weight(.bold))
-                                .frame(width: 24, height: 24)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Убрать распознанную дату")
-                    }
-                }
-                .foregroundStyle(MemoryTheme.accent)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(MemoryTheme.accent.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            captureMetadataChips
 
             if !voiceInput.isListening && isDescriptionPresented {
                 TextField("Описание, ссылка или важные детали", text: $details, axis: .vertical)
@@ -2309,54 +3787,6 @@ private struct QuickCaptureCard: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            if !voiceInput.isListening && isComposerExpanded {
-                VStack(spacing: 11) {
-                    Divider().opacity(0.4)
-
-                    HStack(spacing: 8) {
-                        ForEach(QuickDuePreset.allCases) { option in
-                            Button {
-                                preset = option
-                                ignoredSmartExpression = draft
-                                smartResult = nil
-                            } label: {
-                                Label(option.title, systemImage: option.icon)
-                                    .font(.caption2.weight(.semibold))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.72)
-                                    .frame(maxWidth: .infinity, minHeight: 36)
-                                    .background(
-                                        isSelected(option)
-                                            ? MemoryTheme.accent.opacity(0.14)
-                                            : Color.secondary.opacity(0.07)
-                                    )
-                                    .foregroundStyle(isSelected(option) ? MemoryTheme.accent : Color.secondary)
-                                    .clipShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        Button {
-                            toggleDescription()
-                        } label: {
-                            Image(systemName: "text.alignleft")
-                                .font(.system(size: 12, weight: .semibold))
-                                .frame(width: 36, height: 36)
-                                .background(
-                                    isDescriptionPresented
-                                        ? MemoryTheme.accent.opacity(0.14)
-                                        : Color.secondary.opacity(0.07)
-                                )
-                                .foregroundStyle(isDescriptionPresented ? MemoryTheme.accent : Color.secondary)
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(isDescriptionPresented ? "Скрыть описание" : "Добавить описание")
-                    }
-                }
-                .padding(.top, 1)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
@@ -2394,6 +3824,145 @@ private struct QuickCaptureCard: View {
 
     private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedDetails: String { details.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var inferredEntryKind: EntryKind? {
+        guard ignoredKindExpression != draft else { return nil }
+        return EntryKindInference.infer(from: trimmedDraft, hasDate: resolvedDueDate != nil)
+    }
+
+    private var effectiveEntryKind: EntryKind {
+        entryKindOverride ?? inferredEntryKind ?? account.defaultEntryKind
+    }
+
+    private var resolvedDueDate: Date? {
+        smartResult?.dueDate ?? preset.date
+    }
+
+    private var resolvedEventEndDate: Date? {
+        nil
+    }
+
+    private var isVoicePreviewActive: Bool {
+        voiceInput.isListening || isFinalizingVoiceSubmission || shouldSubmitVoiceWhenStopped
+    }
+
+    private var capturePreviewState: VoiceCapturePreview {
+        isVoicePreviewActive ? VoiceCapturePreview.classify(trimmedDraft) : .single
+    }
+
+    @ViewBuilder private var captureMetadataChips: some View {
+        if !trimmedDraft.isEmpty && capturePreviewState != .uncertain {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if case .multiple(let count) = capturePreviewState {
+                        Text(VoiceEntryCountLabel.short(count))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(MemoryTheme.accent)
+                            .padding(.horizontal, 11)
+                            .frame(height: 32)
+                            .background(MemoryTheme.accent.opacity(0.1))
+                            .clipShape(Capsule())
+                            .accessibilityLabel("Предварительно: \(VoiceEntryCountLabel.short(count))")
+                    } else if capturePreviewState == .single {
+                        if let smartResult {
+                            HStack(spacing: 5) {
+                                Text(smartDateLabel(for: smartResult.dueDate))
+                                    .font(.caption.weight(.semibold))
+                                if !voiceInput.isListening {
+                                    Button {
+                                        ignoredSmartExpression = draft
+                                        self.smartResult = nil
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .frame(width: 20, height: 20)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Убрать распознанную дату")
+                                }
+                            }
+                            .foregroundStyle(MemoryTheme.accent)
+                            .padding(.leading, 11)
+                            .padding(.trailing, voiceInput.isListening ? 11 : 5)
+                            .frame(height: 32)
+                            .background(MemoryTheme.accent.opacity(0.1))
+                            .clipShape(Capsule())
+                            .accessibilityIdentifier("smartDateSuggestion")
+                        }
+                        if !isVoicePreviewActive || inferredEntryKind != nil || entryKindOverride != nil {
+                            Button {
+                                ignoredKindExpression = draft
+                                entryKindOverride = effectiveEntryKind == .event ? .reminder : .event
+                            } label: {
+                                Text(effectiveEntryKind.title)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(entryKindChipColor)
+                                    .padding(.horizontal, 11)
+                                    .frame(height: 32)
+                                    .background(entryKindChipColor.opacity(0.1))
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(voiceInput.isListening)
+                            .accessibilityLabel("Тип записи: \(effectiveEntryKind.title)")
+                            .accessibilityHint("Нажмите, чтобы изменить")
+                        }
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: false)
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private var entryKindChipColor: Color {
+        effectiveEntryKind == .event ? MemoryTheme.warm : MemoryTheme.accent
+    }
+
+    private func detailsDisclosureButton(size: CGFloat) -> some View {
+        Button(action: openDetailedEditor) {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: size, height: size)
+                .background(Color.secondary.opacity(0.09))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Подробные настройки")
+        .accessibilityHint("Открывает полный редактор записи")
+    }
+
+    private func openDetailedEditor() {
+        let title = smartResult?.title ?? trimmedDraft
+        let kind = effectiveEntryKind
+        onOpenDetails(
+            title,
+            Item.normalizedDetails(trimmedDetails),
+            kind,
+            resolvedDueDate,
+            resolvedEventEndDate
+        )
+        focusedField = nil
+    }
+
+    private var showsCancelButton: Bool {
+#if os(macOS)
+        !trimmedDraft.isEmpty || presentation == .desktopInline
+#else
+        !trimmedDraft.isEmpty
+#endif
+    }
+
+    private var compactControlSize: CGFloat { isDocked ? 44 : 40 }
+
+    private var usesMinimalDesktopChrome: Bool {
+#if os(macOS)
+        presentation == .desktopInline
+#else
+        false
+#endif
+    }
     private var isComposerExpanded: Bool {
         guard !voiceInput.isListening else { return false }
         return focusedField != nil
@@ -2435,18 +4004,11 @@ private struct QuickCaptureCard: View {
 
     private func smartDateLabel(for date: Date) -> String {
         let calendar = Calendar.current
-        let time = date.formatted(date: .omitted, time: .shortened)
+        let time = MemoryDateFormatting.time(date)
         if calendar.isDateInToday(date) { return "Сегодня · \(time)" }
         if calendar.isDateInTomorrow(date) { return "Завтра · \(time)" }
-        return Self.smartDateFormatter.string(from: date)
+        return "\(MemoryDateFormatting.editorDate(date)) · \(time)"
     }
-
-    private static let smartDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "d MMM, HH:mm"
-        return formatter
-    }()
 
     private func handleSubmitKey() {
         if trimmedDraft.isEmpty {
@@ -2488,35 +4050,219 @@ private struct QuickCaptureCard: View {
         }
     }
 
-    private func submitVoiceRecording() {
+    @MainActor
+    private func submitVoiceRecording() async {
         let spokenText = voiceInput.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spokenText.isEmpty else { return }
 
         smartParsingTask?.cancel()
-        let parsedResult = NaturalLanguageDateParser.parse(spokenText)
+        let referenceDate = Date.now
+        let calendar = Calendar.current
+        let parsedResult = NaturalLanguageDateParser.parse(
+            spokenText,
+            now: referenceDate,
+            calendar: calendar
+        )
+        let locallySplit = VoiceUtteranceSplitter.split(spokenText)
+        let localResult: VoiceCaptureResult?
+        if isStructuredInterpreterEnabled || locallySplit.count > 1 {
+            localResult = VoiceCaptureResult.local(
+                spokenText,
+                now: referenceDate,
+                calendar: calendar,
+                defaultKind: account.defaultEntryKind
+            )
+        } else {
+            localResult = nil
+        }
+        let interpreted = await enhancedVoiceDraft(
+            for: spokenText,
+            fallback: localResult,
+            now: referenceDate,
+            calendar: calendar
+        )
         let normalizedDetails = Item.normalizedDetails(trimmedDetails)
         let fallbackDate = preset.date
+        if let interpreted, interpreted.entries.count > 1 {
+            let reconciledEntries = interpreted.entries.map { entry -> VoiceCaptureEntry in
+                let parsed = NaturalLanguageDateParser.parse(
+                    entry.sourceText, now: referenceDate, calendar: calendar
+                )
+                // A date from the semantic parser belongs to this entry; do not
+                // overwrite it with a date from another part of the utterance.
+                let draft = entry.draft.dueDate == nil && parsed?.dueDate != nil
+                    ? VoiceDraftReconciler.reconcile(semantic: entry.draft, deterministic: parsed)
+                    : entry.draft
+                return VoiceCaptureEntry(
+                    sourceText: entry.sourceText,
+                    draft: draft,
+                    kind: entry.kind,
+                    endDate: entry.endDate
+                )
+            }
+            resetVoiceComposer()
+            let reviewEntries = reconciledEntries.map {
+                VoiceReviewEntry($0, defaultReminderMinutes: account.defaultReminderMinutes)
+            }
+            onReviewBatch(VoiceBatchReview(referenceDate: referenceDate, entries: reviewEntries))
+            return
+        }
 
+        let interpretedEntry = interpreted?.entries.first
+        let reconciledDraft = interpretedEntry.map {
+            VoiceDraftReconciler.reconcile(semantic: $0.draft, deterministic: parsedResult)
+        }
+        let finalDraft: ReminderDraft
+
+        if let reconciledDraft {
+            finalDraft = ReminderDraft(
+                transcript: spokenText,
+                title: reconciledDraft.title,
+                details: normalizedDetails ?? reconciledDraft.details,
+                dueDate: reconciledDraft.dueDate,
+                reminderOffsets: reconciledDraft.reminderOffsets,
+                confidence: reconciledDraft.confidence,
+                ambiguities: reconciledDraft.ambiguities
+            )
+        } else if let parsedResult {
+            finalDraft = ReminderDraft(
+                transcript: spokenText,
+                title: parsedResult.title,
+                details: normalizedDetails,
+                dueDate: parsedResult.dueDate,
+                reminderOffsets: parsedResult.reminderOffsets,
+                confidence: .high,
+                ambiguities: []
+            )
+        } else {
+            finalDraft = ReminderDraft(
+                transcript: spokenText,
+                title: spokenText,
+                details: normalizedDetails,
+                dueDate: nil,
+                reminderOffsets: [],
+                confidence: .medium,
+                ambiguities: [.missingDate]
+            )
+        }
+
+        resetVoiceComposer()
+
+        if interpretedEntry?.kind == .event && finalDraft.dueDate == nil {
+            onReviewBatch(VoiceBatchReview(
+                referenceDate: referenceDate,
+                entries: [VoiceReviewEntry(VoiceCaptureEntry(
+                    sourceText: spokenText,
+                    draft: finalDraft,
+                    kind: .event,
+                    endDate: interpretedEntry?.endDate
+                ), defaultReminderMinutes: account.defaultReminderMinutes)]
+            ))
+            return
+        }
+
+        if isVoiceClarificationEnabled,
+           let decision = VoiceClarificationPolicy.decision(for: finalDraft) {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) {
+                pendingVoiceClarification = PendingVoiceClarification(
+                    decision: decision,
+                    draft: finalDraft,
+                    details: finalDraft.details,
+                    fallbackDate: fallbackDate,
+                    referenceDate: referenceDate
+                )
+            }
+            return
+        }
+
+        commitVoiceDraft(
+            finalDraft,
+            details: finalDraft.details,
+            dueDate: finalDraft.dueDate ?? fallbackDate,
+            kind: interpretedEntry?.kind,
+            endDate: interpretedEntry?.endDate,
+            referenceDate: referenceDate
+        )
+    }
+
+    private func resetVoiceComposer() {
         draft = ""
         details = ""
         isDescriptionPresented = false
         preset = defaultPreset
         ignoredSmartExpression = nil
+        ignoredKindExpression = nil
+        entryKindOverride = nil
         smartResult = nil
         dismissKeyboard()
+    }
 
-        if let parsedResult {
-            onAdd(
-                parsedResult.title,
-                normalizedDetails,
-                parsedResult.dueDate
+    private func commitVoiceDraft(
+        _ voiceDraft: ReminderDraft,
+        details: String?,
+        dueDate: Date?,
+        kind: EntryKind? = nil,
+        endDate: Date? = nil,
+        referenceDate: Date
+    ) {
+        let inferredKind = EntryKindInference.infer(
+            from: voiceDraft.transcript,
+            hasDate: dueDate != nil
+        )
+        let entryKind: EntryKind = dueDate == nil
+            ? .reminder
+            : (kind ?? inferredKind ?? account.defaultEntryKind)
+        let itemID = onAdd(
+            voiceDraft.title,
+            details,
+            entryKind,
+            dueDate,
+            entryKind == .event ? endDate : nil,
+            voiceDraft.reminderOffsets.isEmpty ? nil : voiceDraft.reminderOffsets
+        )
+        if let itemID {
+            VoicePersonalizationStore.beginCapture(
+                itemID: itemID,
+                transcript: voiceDraft.transcript,
+                title: voiceDraft.title,
+                details: details,
+                dueDate: dueDate,
+                referenceDate: referenceDate
             )
-        } else {
-            onAdd(
-                spokenText,
-                normalizedDetails,
-                fallbackDate
-            )
+        }
+    }
+
+    @MainActor
+    private func enhancedVoiceDraft(
+        for spokenText: String,
+        fallback: VoiceCaptureResult?,
+        now: Date,
+        calendar: Calendar
+    ) async -> VoiceCaptureResult? {
+        guard isDeepSeekInterpreterEnabled,
+              let remoteVoiceInterpreter else { return fallback }
+
+        do {
+            return try await withThrowingTaskGroup(of: VoiceCaptureResult.self) { group in
+                group.addTask {
+                    try await remoteVoiceInterpreter(spokenText, now, calendar)
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(5))
+                    throw VoiceSemanticError.timedOut
+                }
+
+                guard let result = try await group.next() else {
+                    throw VoiceSemanticError.emptyResult
+                }
+                group.cancelAll()
+                if let fallback, fallback.entries.count > 1, result.entries.count == 1 {
+                    return fallback
+                }
+                return result
+            }
+        } catch {
+            return fallback
         }
     }
 
@@ -2531,6 +4277,8 @@ private struct QuickCaptureCard: View {
         isDescriptionPresented = false
         preset = defaultPreset
         ignoredSmartExpression = nil
+        ignoredKindExpression = nil
+        entryKindOverride = nil
         smartResult = nil
         dismissKeyboard()
         if isRecordsPage {
@@ -2538,25 +4286,73 @@ private struct QuickCaptureCard: View {
                 isRecordsComposerPresented = false
             }
         }
+#if os(macOS)
+        if presentation == .desktopInline {
+            onDismiss()
+        }
+#endif
+    }
+
+    private func resetAfterDetailedCommit() {
+        draft = ""
+        details = ""
+        isDescriptionPresented = false
+        preset = defaultPreset
+        ignoredSmartExpression = nil
+        ignoredKindExpression = nil
+        entryKindOverride = nil
+        smartResult = nil
+        focusedField = nil
+
+        if isRecordsPage {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isRecordsComposerPresented = false
+            }
+        }
+#if os(macOS)
+        if presentation == .desktopInline {
+            onDismiss()
+        }
+#endif
     }
 
     private func submit() {
         guard !trimmedDraft.isEmpty else { return }
+        if effectiveEntryKind == .event, resolvedDueDate == nil {
+            openDetailedEditor()
+            return
+        }
         shouldSubmitVoiceWhenStopped = false
         isFinalizingVoiceSubmission = false
         voiceSubmissionTask?.cancel()
         smartParsingTask?.cancel()
         voiceInput.stop()
         if let smartResult {
-            onAdd(smartResult.title, Item.normalizedDetails(trimmedDetails), smartResult.dueDate)
+            _ = onAdd(
+                smartResult.title,
+                Item.normalizedDetails(trimmedDetails),
+                effectiveEntryKind,
+                smartResult.dueDate,
+                nil,
+                smartResult.reminderOffsets.isEmpty ? nil : smartResult.reminderOffsets
+            )
         } else {
-            onAdd(trimmedDraft, Item.normalizedDetails(trimmedDetails), preset.date)
+            _ = onAdd(
+                trimmedDraft,
+                Item.normalizedDetails(trimmedDetails),
+                effectiveEntryKind,
+                preset.date,
+                nil,
+                nil
+            )
         }
         draft = ""
         details = ""
         isDescriptionPresented = false
         preset = defaultPreset
         ignoredSmartExpression = nil
+        ignoredKindExpression = nil
+        entryKindOverride = nil
         dismissKeyboard()
         if isRecordsPage {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -2571,8 +4367,11 @@ private struct GlassVoiceOrb: View {
     @State private var isRotating = false
 
     let isListening: Bool
+    let isProcessing: Bool
     let isPulsing: Bool
     let size: CGFloat
+
+    private var isActive: Bool { isListening || isProcessing }
 
     var body: some View {
         ZStack {
@@ -2591,9 +4390,9 @@ private struct GlassVoiceOrb: View {
                 )
                 .frame(width: size + 22, height: size + 22)
                 .rotationEffect(.degrees(isRotating ? 360 : 0))
-                .blur(radius: isListening ? 19 : 15)
-                .opacity(isListening ? 0.7 : 0.42)
-                .scaleEffect(isListening && isPulsing ? 1.08 : 1)
+                .blur(radius: isActive ? 19 : 15)
+                .opacity(isActive ? 0.7 : 0.42)
+                .scaleEffect(isActive && isPulsing ? 1.08 : 1)
 
             Circle()
                 .fill(
@@ -2623,7 +4422,7 @@ private struct GlassVoiceOrb: View {
                     )
                 )
                 .frame(width: size - 2, height: size - 2)
-                .opacity(isListening ? 0.92 : 0.72)
+                .opacity(isActive ? 0.92 : 0.72)
                 .rotationEffect(.degrees(isRotating ? 360 : 0))
                 .mask {
                     ZStack {
@@ -2640,7 +4439,7 @@ private struct GlassVoiceOrb: View {
                 .fill(
                     RadialGradient(
                         colors: [
-                            Color.white.opacity(isListening ? 0.42 : 0.32),
+                            Color.white.opacity(isActive ? 0.42 : 0.32),
                             Color(red: 1.0, green: 0.63, blue: 0.24).opacity(0.32),
                             Color.pink.opacity(0.08),
                             Color.clear
@@ -2691,18 +4490,30 @@ private struct GlassVoiceOrb: View {
         .frame(width: size + 30, height: size + 30)
         .compositingGroup()
         .shadow(
-            color: MemoryTheme.accent.opacity(isListening ? 0.3 : 0.16),
-            radius: isListening ? 34 : 24,
+            color: MemoryTheme.accent.opacity(isActive ? 0.3 : 0.16),
+            radius: isActive ? 34 : 24,
             y: 12
         )
-        .scaleEffect(isListening && isPulsing ? 1.025 : 1)
+        .scaleEffect(isActive && isPulsing ? 1.025 : 1)
         .animation(.easeInOut(duration: 1.5), value: isPulsing)
-        .onAppear { startRotation() }
+        .onAppear { updateRotation(isActive: isActive) }
+        .onChange(of: isActive) { _, active in
+            updateRotation(isActive: active)
+        }
         .accessibilityHidden(true)
     }
 
-    private func startRotation() {
-        guard !reduceMotion else { return }
+    private func updateRotation(isActive: Bool) {
+        guard !reduceMotion, isActive else {
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                isRotating = false
+            }
+            return
+        }
+
+        isRotating = false
         withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
             isRotating = true
         }
@@ -2717,13 +4528,15 @@ private struct HomePriorityCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Button(action: onToggle) {
-                Image(systemName: "circle")
-                    .font(.system(size: 25, weight: .medium))
-                    .foregroundStyle(isOverdue ? Color.red.opacity(0.8) : Color.secondary.opacity(0.65))
+            if !item.isEvent {
+                Button(action: onToggle) {
+                    Image(systemName: "circle")
+                        .font(.system(size: 25, weight: .medium))
+                        .foregroundStyle(isOverdue ? Color.red.opacity(0.8) : Color.secondary.opacity(0.65))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Отметить выполненным")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Отметить выполненным")
 
             Button(action: onEdit) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -2741,9 +4554,15 @@ private struct HomePriorityCard: View {
                             .multilineTextAlignment(.leading)
                     }
 
-                    Label(dateLabel, systemImage: item.notificationsEnabled ? "bell" : "calendar")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(isOverdue ? Color.red : MemoryTheme.accent)
+                    if item.isEvent {
+                        Text(dateLabel)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(MemoryTheme.warm)
+                    } else {
+                        Label(dateLabel, systemImage: item.notificationsEnabled ? "bell" : "calendar")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(isOverdue ? Color.red : MemoryTheme.accent)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -2759,7 +4578,9 @@ private struct HomePriorityCard: View {
         .background(
             LinearGradient(
                 colors: [
-                    isOverdue ? Color.red.opacity(0.09) : MemoryTheme.accent.opacity(0.08),
+                    item.isEvent
+                        ? MemoryTheme.warm.opacity(0.22)
+                        : isOverdue ? Color.red.opacity(0.09) : MemoryTheme.accent.opacity(0.08),
                     MemoryTheme.card
                 ],
                 startPoint: .topLeading,
@@ -2770,7 +4591,9 @@ private struct HomePriorityCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(
-                    isOverdue ? Color.red.opacity(0.14) : MemoryTheme.accent.opacity(0.1),
+                    item.isEvent
+                        ? MemoryTheme.warm.opacity(0.28)
+                        : isOverdue ? Color.red.opacity(0.14) : MemoryTheme.accent.opacity(0.1),
                     lineWidth: 1
                 )
         }
@@ -2779,28 +4602,43 @@ private struct HomePriorityCard: View {
 
     private var dateLabel: String {
         guard let date = item.dueDate else { return "Без срока" }
-        let time = date.formatted(date: .omitted, time: .shortened)
+        if item.isEvent {
+            let start = MemoryDateFormatting.time(date)
+            if let endDate = item.endDate {
+                let end = MemoryDateFormatting.time(endDate)
+                if date <= .now, endDate > .now { return "Сейчас · до \(end)" }
+                if Calendar.current.isDateInToday(date) { return "Сегодня · \(start)–\(end)" }
+                if Calendar.current.isDateInTomorrow(date) { return "Завтра · \(start)–\(end)" }
+                return "\(MemoryDateFormatting.shortDate(date)) · \(start)–\(end)"
+            }
+            if Calendar.current.isDateInToday(date) { return "Сегодня · \(start)" }
+            if Calendar.current.isDateInTomorrow(date) { return "Завтра · \(start)" }
+            return "\(MemoryDateFormatting.shortDate(date)) · \(start)"
+        }
+        let time = MemoryDateFormatting.time(date)
         if isOverdue { return "Просрочено · \(time)" }
         if Calendar.current.isDateInToday(date) { return "Сегодня · \(time)" }
         if Calendar.current.isDateInTomorrow(date) { return "Завтра · \(time)" }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        return MemoryDateFormatting.shortDateTime(date)
     }
 }
 
-private struct MemoryItemRow: View {
+struct MemoryItemRow: View {
     let item: Item
-    let onToggle: () -> Void
+    var onToggle: (() -> Void)? = nil
     let onEdit: () -> Void
-    let onDelete: () -> Void
+    var onDelete: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 14) {
-            Button(action: onToggle) {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(item.isCompleted ? MemoryTheme.accent : Color.secondary.opacity(0.65))
+            if !item.isEvent, let onToggle {
+                Button(action: onToggle) {
+                    Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(item.isCompleted ? MemoryTheme.accent : Color.secondary.opacity(0.65))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             Button(action: onEdit) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.title.isEmpty ? "Без названия" : item.title)
@@ -2813,44 +4651,67 @@ private struct MemoryItemRow: View {
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
-                    Label(dateLabel, systemImage: dateIcon).font(.caption).foregroundStyle(dateColor)
+                    if item.isEvent {
+                        Text(dateLabel)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(dateColor)
+                    } else {
+                        Label(dateLabel, systemImage: dateIcon)
+                            .font(.caption)
+                            .foregroundStyle(dateColor)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            Menu {
-                Button(action: onEdit) { Label("Изменить", systemImage: "pencil") }
-                Button(role: .destructive, action: onDelete) { Label("Удалить", systemImage: "trash") }
-            } label: {
-                Image(systemName: "ellipsis").font(.headline).foregroundStyle(.secondary).frame(width: 30, height: 30)
-            }
-            .menuStyle(.borderlessButton)
         }
-        .padding(.horizontal, 17).padding(.vertical, 15).memoryCard()
+        .padding(.horizontal, 17)
+        .padding(.vertical, 15)
+        .memoryEntryCard(isEvent: item.isEvent)
         .contextMenu {
             Button(action: onEdit) { Label("Изменить", systemImage: "pencil") }
-            Button(role: .destructive, action: onDelete) { Label("Удалить", systemImage: "trash") }
+            if let onDelete {
+                Button(role: .destructive, action: onDelete) { Label("Удалить", systemImage: "trash") }
+            }
         }
     }
 
     private var dateLabel: String {
+        if item.isEvent, let startDate = item.dueDate {
+            let start = MemoryDateFormatting.time(startDate)
+            if let endDate = item.endDate {
+                let end = MemoryDateFormatting.time(endDate)
+                if startDate <= .now, endDate > .now { return "Сейчас · до \(end)" }
+                if Calendar.current.isDateInToday(startDate) { return "Сегодня · \(start)–\(end)" }
+                if Calendar.current.isDateInTomorrow(startDate) { return "Завтра · \(start)–\(end)" }
+                return "\(MemoryDateFormatting.shortDate(startDate)) · \(start)–\(end)"
+            }
+            if Calendar.current.isDateInToday(startDate) { return "Сегодня · \(start)" }
+            if Calendar.current.isDateInTomorrow(startDate) { return "Завтра · \(start)" }
+            return "\(MemoryDateFormatting.shortDate(startDate)) · \(start)"
+        }
         if item.isCompleted {
             guard let completedAt = item.completedAt else { return "Выполнено" }
-            return "Выполнено · \(completedAt.formatted(date: .abbreviated, time: .omitted))"
+            return "Выполнено · \(MemoryDateFormatting.shortDate(completedAt))"
         }
         guard let date = item.dueDate else { return "Без срока" }
-        if date < .now { return "Просрочено · \(date.formatted(date: .omitted, time: .shortened))" }
-        if Calendar.current.isDateInToday(date) { return "Сегодня · \(date.formatted(date: .omitted, time: .shortened))" }
-        if Calendar.current.isDateInTomorrow(date) { return "Завтра · \(date.formatted(date: .omitted, time: .shortened))" }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        if date < .now { return "Просрочено · \(MemoryDateFormatting.time(date))" }
+        if Calendar.current.isDateInToday(date) { return "Сегодня · \(MemoryDateFormatting.time(date))" }
+        if Calendar.current.isDateInTomorrow(date) { return "Завтра · \(MemoryDateFormatting.time(date))" }
+        return MemoryDateFormatting.shortDateTime(date)
     }
     private var dateIcon: String {
+        if item.isEvent { return "calendar" }
         if item.isCompleted { return "checkmark" }
         guard item.dueDate != nil else { return "tray" }
         return item.notificationsEnabled ? "bell" : "calendar"
     }
     private var dateColor: Color {
         guard !item.isCompleted, let date = item.dueDate else { return .secondary }
+        if item.isEvent, let endDate = item.endDate {
+            return endDate < .now ? .secondary : MemoryTheme.warm
+        }
+        if item.isEvent { return date < .now ? .secondary : MemoryTheme.warm }
         return date < .now ? .red : MemoryTheme.accent
     }
 }

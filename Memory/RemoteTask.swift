@@ -6,6 +6,8 @@ struct RemoteTask: Codable, Identifiable, Sendable {
     var title: String
     var details: String?
     var dueAt: String?
+    var entryKind: String?
+    var endAt: String?
     var notificationsEnabled: Bool
     var reminderOffsets: [Int]
     var isCompleted: Bool
@@ -20,6 +22,8 @@ struct RemoteTask: Codable, Identifiable, Sendable {
         case title
         case details
         case dueAt = "due_at"
+        case entryKind = "entry_kind"
+        case endAt = "end_at"
         case notificationsEnabled = "notifications_enabled"
         case reminderOffsets = "reminder_offsets"
         case isCompleted = "is_completed"
@@ -35,6 +39,8 @@ struct RemoteTask: Codable, Identifiable, Sendable {
         title = item.title
         details = item.details
         dueAt = item.dueDate.map(SupabaseDate.string)
+        entryKind = item.entryKind.rawValue
+        endAt = item.endDate.map(SupabaseDate.string)
         notificationsEnabled = item.notificationsEnabled
         reminderOffsets = item.effectiveReminderOffsets
         isCompleted = item.isCompleted
@@ -54,6 +60,8 @@ struct RemoteTask: Codable, Identifiable, Sendable {
             timestamp: createdDate,
             isCompleted: isCompleted,
             dueDate: dueAt.flatMap(SupabaseDate.date),
+            entryKind: entryKind.flatMap(EntryKind.init(rawValue:)) ?? .reminder,
+            endDate: endAt.flatMap(SupabaseDate.date),
             notificationsEnabled: notificationsEnabled,
             reminderOffsets: reminderOffsets,
             ownerID: userID.uuidString.lowercased(),
@@ -70,6 +78,8 @@ struct RemoteTask: Codable, Identifiable, Sendable {
         item.timestamp = createdDate
         item.isCompleted = isCompleted
         item.dueDate = dueAt.flatMap(SupabaseDate.date)
+        item.entryKind = entryKind.flatMap(EntryKind.init(rawValue:)) ?? .reminder
+        item.endDate = item.isEvent ? endAt.flatMap(SupabaseDate.date) : nil
         item.setReminderOffsets(notificationsEnabled ? reminderOffsets : [])
         item.completedAt = completedAt.flatMap(SupabaseDate.date)
         item.updatedAt = updatedDate
