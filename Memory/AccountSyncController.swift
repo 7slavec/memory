@@ -40,7 +40,7 @@ final class AccountSyncController: ObservableObject {
             .flatMap(EntryKind.init(rawValue:)) ?? .reminder
         lastSignedInEmail = UserDefaults.standard.string(forKey: Self.lastSignedInEmailKey)
 
-        if !VoiceReviewTesting.isEnabled, let configuration = SupabaseConfiguration.current {
+        if !VoiceReviewTesting.isEnabled, !DesignCatalogMode.isEnabled, let configuration = SupabaseConfiguration.current {
             client = SupabaseClient(
                 supabaseURL: configuration.url,
                 supabaseKey: configuration.publishableKey

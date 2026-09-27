@@ -22,7 +22,7 @@ final class MemoryAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         // Test hosts and the DEBUG-only in-memory UI fixture must not activate
         // the user's existing app and terminate before XCTest can connect.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
-              !VoiceReviewTesting.isEnabled else { return }
+              !VoiceReviewTesting.isEnabled, !DesignCatalogMode.isEnabled else { return }
         guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
 
         let currentProcessID = ProcessInfo.processInfo.processIdentifier
@@ -91,7 +91,13 @@ private struct InitialAccessRootView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
-            if VoiceReviewTesting.isEnabled || !needsInitialAccess {
+            if DesignCatalogMode.isEnabled {
+#if DEBUG
+                DesignCatalogView()
+#else
+                EmptyView()
+#endif
+            } else if VoiceReviewTesting.isEnabled || !needsInitialAccess {
                 ContentView()
                     .transition(.opacity)
             } else if isAuthenticationPresented {
@@ -111,7 +117,7 @@ private struct InitialAccessRootView: View {
             }
         }
         .task {
-            guard !VoiceReviewTesting.isEnabled else { return }
+            guard !VoiceReviewTesting.isEnabled, !DesignCatalogMode.isEnabled else { return }
             if isInitialAccessPreviewRequested {
                 isInitialAccessPreviewPending = true
             }
@@ -188,7 +194,7 @@ struct MemoryApp: App {
         let schema = Schema([
             Item.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: VoiceReviewTesting.isEnabled)
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: VoiceReviewTesting.isEnabled || DesignCatalogMode.isEnabled)
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])

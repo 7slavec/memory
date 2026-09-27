@@ -89,6 +89,74 @@ final class MemoryUITests: XCTestCase {
     }
 
     @MainActor
+    func testDesignCatalogScheduleIsLocalAndExplicit() throws {
+#if os(macOS)
+        let app = XCUIApplication()
+        app.launchArguments = ["--design-catalog"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 2) {
+            app.menuBars.menuBarItems["File"].click()
+            app.menuBars.menuItems["New Window"].click()
+        }
+        XCTAssertTrue(app.staticTexts["catalog-title"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Начать голосовой ввод"].exists)
+        let records = XCTAttachment(screenshot: app.screenshot())
+        records.name = "Catalog records — two themes"
+        records.lifetime = .keepAlways
+        add(records)
+
+        // Each theme owns an independent sample. Scope interaction to one board.
+        app.radioButtons["Светлая"].click()
+        app.popUpButtons["catalog-section"].click()
+        app.menuItems["Дата и время"].click()
+        let timeChip = app.buttons["catalog-open-time"].firstMatch
+        XCTAssertTrue(timeChip.waitForExistence(timeout: 5))
+        timeChip.click()
+        var field = app.popovers.textFields["Время"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.click()
+        field.typeKey(.rightArrow, modifierFlags: .command)
+        field.typeKey(.delete, modifierFlags: .command)
+        XCTAssertEqual(field.value as? String, "")
+        field.typeText("25:00")
+        app.popovers.buttons["Готово"].click()
+        XCTAssertTrue(app.popovers.staticTexts["Введите время от 00:00 до 23:59"].exists)
+        field.click()
+        field.typeKey(.rightArrow, modifierFlags: .command)
+        field.typeKey(.delete, modifierFlags: .command)
+        XCTAssertEqual(field.value as? String, "")
+        field.typeText("14:30")
+        XCTAssertEqual(field.value as? String, "14:30")
+        app.popovers.buttons["Готово"].click()
+        let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "14:30"), object: timeChip)
+        XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 3), .completed)
+
+        timeChip.click()
+        field = app.popovers.textFields["Время"].firstMatch
+        field.click()
+        field.typeKey(.rightArrow, modifierFlags: .command)
+        field.typeKey(.delete, modifierFlags: .command)
+        XCTAssertEqual(field.value as? String, "")
+        field.typeText("20:20")
+        field.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(timeChip.label, "14:30")
+
+        app.buttons["catalog-open-date"].firstMatch.click()
+        let nextDay = app.popovers.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "28 сентября")).firstMatch
+        XCTAssertTrue(nextDay.waitForExistence(timeout: 5))
+        nextDay.click()
+        XCTAssertTrue(app.buttons["catalog-open-date"].firstMatch.label.hasPrefix("28"))
+        XCTAssertEqual(timeChip.label, "14:30")
+        let schedule = XCTAttachment(screenshot: app.screenshot())
+        schedule.name = "Catalog schedule — native controls"
+        schedule.lifetime = .keepAlways
+        add(schedule)
+#else
+        throw XCTSkip("Mac catalog interaction test; iPhone picker needs its own device scenario")
+#endif
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {

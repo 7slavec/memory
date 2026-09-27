@@ -48,6 +48,7 @@ if [[ "$run_ui" == true ]]; then
     -destination 'platform=macOS' -derivedDataPath "$mac_data" \
     -resultBundlePath "$report_dir/mac-ui.xcresult" \
     -only-testing:MemoryUITests/MemoryUITests/testVoiceReviewUsesOnePageAndReturnsFromEachRecord \
+    -only-testing:MemoryUITests/MemoryUITests/testDesignCatalogScheduleIsLocalAndExplicit \
     test -quiet
 fi
 
