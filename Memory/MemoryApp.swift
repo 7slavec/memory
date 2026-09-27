@@ -19,9 +19,10 @@ final class MemoryAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     func applicationWillFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
 
-        // Unit tests launch a short-lived host process. Treating it as a second
-        // user-facing copy terminates the runner before XCTest can connect.
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        // Test hosts and the DEBUG-only in-memory UI fixture must not activate
+        // the user's existing app and terminate before XCTest can connect.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+              !VoiceReviewTesting.isEnabled else { return }
         guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
 
         let currentProcessID = ProcessInfo.processInfo.processIdentifier
