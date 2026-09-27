@@ -17,7 +17,7 @@ struct DesignCatalogView: View {
                 HStack {
                     Text("Norka · Компоненты").font(.title2.weight(.semibold)).accessibilityIdentifier("catalog-title")
                     Spacer()
-                    Text("Предложение 01").font(.caption).foregroundStyle(.secondary)
+                    Text("Предложение 02").font(.caption).foregroundStyle(.secondary)
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 16) { selectors }
@@ -89,16 +89,32 @@ private struct CatalogFoundations: View {
     @Environment(\.colorScheme) private var scheme
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            Text("Важное — рядом").font(CatalogType.largeTitle)
-            Text("Все записи").font(CatalogType.h1)
-            Text("Сегодня").font(CatalogType.h2)
-            Text("Записать мысль, не теряя контекст.").font(CatalogType.body)
-            Text("Ближайшее").font(CatalogType.caption).foregroundStyle(palette.secondary.color)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Large title").font(.caption).foregroundStyle(palette.secondary.color)
+                Text("Важное — рядом").font(CatalogType.largeTitle)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("H1 · страница").font(.caption).foregroundStyle(palette.secondary.color)
+                Text("Все записи").font(CatalogType.h1)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("H2 · раздел").font(.caption).foregroundStyle(palette.secondary.color)
+                Text("Сегодня").font(CatalogType.h2)
+            }
+            Text("Body · Записать мысль, не теряя контекст.").font(CatalogType.body)
+            Text("Caption · Ближайшее").font(CatalogType.caption).foregroundStyle(palette.secondary.color)
             Divider()
+            Text("Цвет и текст").font(CatalogType.h2)
             HStack(spacing: 12) {
-                swatch("Акцент", palette.accent)
-                swatch("Событие", palette.event)
-                swatch("Удаление", palette.danger)
+                swatch("Акцент", tone: .accent)
+                swatch("Событие", tone: .event)
+                swatch("Удаление", tone: .danger)
+            }
+            HStack(spacing: 12) {
+                Text("Поверхность").font(CatalogType.caption).frame(maxWidth: .infinity, minHeight: 48)
+                    .background(palette.surface.color, in: RoundedRectangle(cornerRadius: 12))
+                Text("Контрол").font(CatalogType.caption).frame(maxWidth: .infinity, minHeight: 48)
+                    .background(palette.inset.color, in: RoundedRectangle(cornerRadius: 12))
             }
             VStack(alignment: .leading, spacing: 12) {
                 Text("Отступы").font(CatalogType.h2)
@@ -112,9 +128,12 @@ private struct CatalogFoundations: View {
         }
     }
     private var palette: CatalogPalette { .init(dark: scheme == .dark) }
-    private func swatch(_ title: String, _ value: CatalogRGB) -> some View {
+    private func swatch(_ title: String, tone: CatalogTone) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 12).fill(value.color).frame(height: 44)
+            Text("Aa").font(.title2.weight(.semibold))
+                .foregroundStyle(palette.foreground(for: tone).color)
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(palette.fill(for: tone).color, in: RoundedRectangle(cornerRadius: 12))
             Text(title).font(CatalogType.caption)
         }.frame(maxWidth: .infinity)
     }
@@ -133,7 +152,7 @@ private struct CatalogControlExamples: View {
                 ForEach(CatalogControlSize.allCases) { size in
                     VStack(spacing: 4) {
                         CatalogIconButton(symbol: "plus", label: "Добавить \(size.rawValue)", size: size, tone: .primary) { status = "Нажата кнопка \(size.rawValue)" }
-                        Text(size.rawValue).font(.caption)
+                        Text("\(size.rawValue) · \(Int(size.visual))").font(.caption)
                     }
                 }
             }
@@ -160,10 +179,7 @@ private struct CatalogControlExamples: View {
                     Toggle("Уведомления", isOn: $notifications).labelsHidden().toggleStyle(.switch)
                 }
                 CatalogSettingsRow(title: "Напомнить") {
-                    Menu(reminder) {
-                        Button("В момент события") { reminder = "В момент события" }
-                        Button("За 15 минут") { reminder = "За 15 минут" }
-                    }.fixedSize()
+                    CatalogChoiceControl(selection: $reminder, options: ["В момент", "За 15 минут", "За час", "За день"])
                 }
                 Button { status = "Пример перехода в архив" } label: {
                     CatalogSettingsRow(title: "Архив", icon: "archivebox") { Image(systemName: "chevron.right") }
@@ -227,7 +243,7 @@ private struct CatalogHeader: View {
     }
 }
 
-private struct CatalogInputExamples: View {
+struct CatalogInputExamples: View {
     @State private var text = ""
     @State private var search = ""
     @State private var state = "Покой"
@@ -243,27 +259,14 @@ private struct CatalogInputExamples: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
             Text(state == "Думает" ? "Вникаю в контекст…" : state == "Слушает" ? "Слушаю тебя" : "О чём напомнить?")
                 .font(CatalogType.h1).frame(maxWidth: .infinity)
-            HStack(spacing: 8) {
-                Button { text = ""; sent = true } label: { Image(systemName: "arrow.up") }
-                    .buttonStyle(CatalogButtonStyle(tone: .primary, iconOnly: true))
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityLabel("Отправить пример")
-                TextField("Написать напоминание", text: $text, axis: .vertical)
-                    .lineLimit(1...4).textFieldStyle(.plain).font(CatalogType.body)
-                    .accessibilityIdentifier("catalog-composer")
-                CatalogIconButton(symbol: "arrow.up.left.and.arrow.down.right", label: "Развернуть пример", size: .small) { showsExpansionNote = true }
-            }
-            .padding(12).background(palette.surface.color, in: RoundedRectangle(cornerRadius: 20))
+            CatalogComposerField(text: $text, onSend: { text = ""; sent = true }, onExpand: { showsExpansionNote = true })
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     CatalogChip(title: "Завтра · 09:00") {}
                     CatalogChip(title: "Напоминание") {}
                 }
             }
-            HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass").foregroundStyle(palette.secondary.color)
-                TextField("Что ищем?", text: $search).textFieldStyle(.plain).font(CatalogType.body)
-                if !search.isEmpty { CatalogIconButton(symbol: "xmark", label: "Очистить поиск", size: .small) { search = "" } }
-            }.padding(16).frame(minHeight: 56).background(palette.surface.color, in: RoundedRectangle(cornerRadius: 20))
+            CatalogSearchField(text: $search)
             if sent { Text("Пример отправлен. Настоящая запись не создавалась.").font(.caption) }
         }
         .alert("Образец поля ввода", isPresented: $showsExpansionNote) {

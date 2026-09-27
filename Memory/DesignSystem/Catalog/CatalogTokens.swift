@@ -1,7 +1,7 @@
 #if DEBUG
 import SwiftUI
 
-// Proposal v1. Deliberately not wired into MemoryTheme or persisted settings.
+// Proposal v2. Deliberately not wired into MemoryTheme or persisted settings.
 struct CatalogRGB {
     let hex: UInt32
     var channels: [Double] {
@@ -19,20 +19,40 @@ struct CatalogRGB {
 
 struct CatalogPalette {
     let dark: Bool
-    var background: CatalogRGB { .init(hex: dark ? 0x101014 : 0xF5F4F9) }
-    var surface: CatalogRGB { .init(hex: dark ? 0x1E1E25 : 0xFFFFFF) }
-    var inset: CatalogRGB { .init(hex: dark ? 0x2B2B35 : 0xECEBF3) }
-    var text: CatalogRGB { .init(hex: dark ? 0xF7F6FC : 0x1B1925) }
-    var secondary: CatalogRGB { .init(hex: dark ? 0xB7B3C7 : 0x646071) }
-    var accent: CatalogRGB { .init(hex: dark ? 0xB9ACFF : 0x5941C8) }
-    var accentSurface: CatalogRGB { .init(hex: dark ? 0x302747 : 0xEEE9FF) }
-    var primaryFill: CatalogRGB { .init(hex: 0x6149D8) }
+    var background: CatalogRGB { .init(hex: dark ? 0x0E0E12 : 0xF3F3F7) }
+    var surface: CatalogRGB { .init(hex: dark ? 0x24242C : 0xFFFFFF) }
+    var inset: CatalogRGB { .init(hex: dark ? 0x35353F : 0xE3E3EC) }
+    var text: CatalogRGB { .init(hex: dark ? 0xFAFAFC : 0x15151B) }
+    var secondary: CatalogRGB { .init(hex: dark ? 0xC0C0CC : 0x60606C) }
+    var accent: CatalogRGB { primaryFill }
+    var accentSurface: CatalogRGB { primaryFill }
+    var primaryFill: CatalogRGB { .init(hex: 0x6438EE) }
     var onPrimary: CatalogRGB { .init(hex: 0xFFFFFF) }
-    var event: CatalogRGB { .init(hex: dark ? 0xEFBB70 : 0x805015) }
-    var eventSurface: CatalogRGB { .init(hex: dark ? 0x30261D : 0xFFF2DE) }
-    var danger: CatalogRGB { .init(hex: dark ? 0xFFABB2 : 0xB3263C) }
-    var dangerSurface: CatalogRGB { .init(hex: dark ? 0x3B232B : 0xFCE9ED) }
-    var border: CatalogRGB { .init(hex: dark ? 0x41404E : 0xD8D4E3) }
+    var event: CatalogRGB { eventSurface }
+    var eventSurface: CatalogRGB { .init(hex: 0xFFD12F) }
+    var eventEnd: CatalogRGB { .init(hex: 0xFFAE24) }
+    var onEvent: CatalogRGB { .init(hex: 0x15151B) }
+    var eventSecondary: CatalogRGB { .init(hex: 0x39393F) }
+    var danger: CatalogRGB { dangerSurface }
+    var dangerSurface: CatalogRGB { .init(hex: 0xD92344) }
+    var border: CatalogRGB { .init(hex: dark ? 0x484852 : 0xD3D3E0) }
+
+    func foreground(for tone: CatalogTone) -> CatalogRGB {
+        switch tone {
+        case .primary, .accent, .danger: onPrimary
+        case .event: onEvent
+        case .neutral: text
+        }
+    }
+    func fill(for tone: CatalogTone) -> CatalogRGB {
+        switch tone {
+        case .primary: primaryFill
+        case .accent: accentSurface
+        case .event: eventSurface
+        case .danger: dangerSurface
+        case .neutral: inset
+        }
+    }
 }
 
 enum CatalogMetrics {
@@ -42,15 +62,20 @@ enum CatalogMetrics {
     static let sectionGap: CGFloat = 32
     static let cardRadius: CGFloat = 20
     static let headerHeight: CGFloat = 72
+    static let fieldInset: CGFloat = 8
+    static let chipHeight: CGFloat = 32
 }
 
 enum CatalogControlSize: String, CaseIterable, Identifiable {
     case small = "S", medium = "M", large = "L"
     var id: Self { self }
     var visual: CGFloat {
-        switch self { case .small: 32; case .medium: 44; case .large: 52 }
+        switch self { case .small: 40; case .medium: 48; case .large: 56 }
     }
     var hit: CGFloat { max(44, visual) }
+    var symbol: CGFloat {
+        switch self { case .small: 18; case .medium: 22; case .large: 26 }
+    }
 }
 
 enum CatalogType {

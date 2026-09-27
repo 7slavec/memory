@@ -123,7 +123,7 @@ struct CatalogTime: View {
                 .background(palette.inset.color, in: RoundedRectangle(cornerRadius: 16))
                 .accessibilityLabel("Время").onSubmit(apply)
 #endif
-            if invalid { Text("Введите время от 00:00 до 23:59").font(.caption).foregroundStyle(palette.danger.color) }
+            if invalid { Text("Введите время от 00:00 до 23:59").font(.caption).foregroundStyle(palette.text.color) }
             Button("Готово", action: apply).buttonStyle(CatalogButtonStyle(tone: .primary))
         }
         .padding(24).foregroundStyle(palette.text.color)

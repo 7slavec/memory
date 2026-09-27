@@ -157,6 +157,63 @@ final class MemoryUITests: XCTestCase {
     }
 
     @MainActor
+    func testCatalogFieldsKeepGeometryAndCustomChoiceWorks() throws {
+#if os(macOS)
+        let app = XCUIApplication()
+        app.launchArguments = ["--design-catalog"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 2) {
+            app.menuBars.menuBarItems["File"].click()
+            app.menuBars.menuItems["New Window"].click()
+        }
+        XCTAssertTrue(app.staticTexts["catalog-title"].waitForExistence(timeout: 10))
+        app.radioButtons["Светлая"].click()
+        app.popUpButtons["catalog-section"].click()
+        app.menuItems["Ввод"].click()
+
+        let search = app.textFields["catalog-search"].firstMatch
+        let box = app.descendants(matching: .any).matching(identifier: "catalog-search-container").firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertTrue(box.exists)
+        let initial = box.frame
+        let send = app.buttons["catalog-send"].firstMatch
+        let expand = app.buttons["catalog-expand"].firstMatch
+        XCTAssertEqual(send.frame.width, expand.frame.width, accuracy: 0.5)
+        XCTAssertEqual(send.frame.height, expand.frame.height, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(send.frame.width, 48)
+        XCTAssertFalse(send.isEnabled)
+
+        search.click()
+        search.typeText("Очень длинный поисковый запрос для проверки стабильного размера поля")
+        XCTAssertEqual(box.frame.height, initial.height, accuracy: 0.5)
+        XCTAssertEqual(box.frame.width, initial.width, accuracy: 0.5)
+        app.buttons["Очистить поиск"].click()
+        XCTAssertEqual(search.value as? String, "")
+        XCTAssertEqual(box.frame.height, initial.height, accuracy: 0.5)
+        XCTAssertEqual(box.frame.width, initial.width, accuracy: 0.5)
+
+        app.popUpButtons["catalog-section"].click()
+        app.menuItems["Элементы"].click()
+        let choice = app.buttons["catalog-reminder-choice"].firstMatch
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        if !choice.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        choice.click()
+        XCTAssertTrue(app.popovers.buttons["За час"].waitForExistence(timeout: 5))
+        app.popovers.buttons["За час"].click()
+        XCTAssertEqual(choice.value as? String, "За час")
+        choice.click()
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(choice.value as? String, "За час")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Catalog controls revision 02"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+#else
+        throw XCTSkip("Mac layout regression; physical iPhone keyboard testing is separate")
+#endif
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {

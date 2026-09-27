@@ -13,13 +13,22 @@ struct DesignCatalogTests {
         let pairs: [(String, CatalogRGB, CatalogRGB)] = [
             ("Body/background", p.text, p.background), ("Body/surface", p.text, p.surface),
             ("Secondary/background", p.secondary, p.background), ("Secondary/surface", p.secondary, p.surface),
-            ("Disabled/inset", p.secondary, p.inset), ("Accent/background", p.accent, p.background),
-            ("Accent/chip", p.accent, p.accentSurface), ("Schedule/event", p.accent, p.eventSurface),
-            ("Event/chip", p.event, p.eventSurface), ("Danger/chip", p.danger, p.dangerSurface),
+            ("Disabled/inset", p.secondary, p.inset),
+            ("Accent/chip", p.onPrimary, p.accentSurface),
+            ("Event/start", p.onEvent, p.eventSurface), ("Event/end", p.onEvent, p.eventEnd),
+            ("Event description/start", p.eventSecondary, p.eventSurface), ("Event description/end", p.eventSecondary, p.eventEnd),
+            ("Danger/button", p.onPrimary, p.dangerSurface),
             ("Primary/button", p.onPrimary, p.primaryFill)
         ]
         for (name, text, background) in pairs {
             #expect(text.contrast(on: background) >= 4.5, "\(name), dark=\(dark)")
+        }
+        for tone in [CatalogTone.primary, .neutral, .accent, .event, .danger] {
+            for overlay in [0.0, 0.07, 0.14] {
+                let channels = p.fill(for: tone).channels.map { UInt32(($0 * (1 - overlay) * 255).rounded()) }
+                let stateFill = CatalogRGB(hex: channels[0] << 16 | channels[1] << 8 | channels[2])
+                #expect(p.foreground(for: tone).contrast(on: stateFill) >= 4.5)
+            }
         }
     }
 

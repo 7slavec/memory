@@ -49,6 +49,7 @@ if [[ "$run_ui" == true ]]; then
     -resultBundlePath "$report_dir/mac-ui.xcresult" \
     -only-testing:MemoryUITests/MemoryUITests/testVoiceReviewUsesOnePageAndReturnsFromEachRecord \
     -only-testing:MemoryUITests/MemoryUITests/testDesignCatalogScheduleIsLocalAndExplicit \
+    -only-testing:MemoryUITests/MemoryUITests/testCatalogFieldsKeepGeometryAndCustomChoiceWorks \
     test -quiet
 fi
 
