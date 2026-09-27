@@ -5,7 +5,15 @@ import Foundation
 enum VoiceReviewTesting {
     static var isEnabled: Bool {
 #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--uitest-voice-review")
+        ProcessInfo.processInfo.arguments.contains("--uitest-voice-review") || isRecordsEnabled
+#else
+        false
+#endif
+    }
+
+    static var isRecordsEnabled: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--uitest-records-design")
 #else
         false
 #endif

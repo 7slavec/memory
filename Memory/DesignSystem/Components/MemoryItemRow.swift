@@ -5,8 +5,28 @@ struct MemoryItemRow: View {
     var onToggle: (() -> Void)? = nil
     let onEdit: () -> Void
     var onDelete: (() -> Void)? = nil
+    var usesFigmaDesign = false
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if usesFigmaDesign {
+            FigmaRecordCard(
+                title: item.title, details: item.details,
+                isEvent: item.isEvent, isCompleted: item.isCompleted,
+                schedule: FigmaRecordSchedule(text: dateLabel, tone: figmaScheduleTone),
+                onEdit: onEdit, onToggle: onToggle, onDelete: onDelete
+            )
+        } else {
+            legacyBody
+        }
+    }
+
+    private var figmaScheduleTone: FigmaRecordSchedule.Tone {
+        if item.isCompleted || item.dueDate == nil { return .muted }
+        if item.isEvent { return .event }
+        return (item.dueDate ?? .distantFuture) < .now ? .overdue : .reminder
+    }
+
+    private var legacyBody: some View {
         HStack(spacing: 14) {
             if !item.isEvent, let onToggle {
                 Button(action: onToggle) {

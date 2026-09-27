@@ -50,6 +50,8 @@ if [[ "$run_ui" == true ]]; then
     -only-testing:MemoryUITests/MemoryUITests/testVoiceReviewUsesOnePageAndReturnsFromEachRecord \
     -only-testing:MemoryUITests/MemoryUITests/testDesignCatalogScheduleIsLocalAndExplicit \
     -only-testing:MemoryUITests/MemoryUITests/testCatalogFieldsKeepGeometryAndCustomChoiceWorks \
+    -only-testing:MemoryUITests/MemoryUITests/testFigmaRecordsPreserveSearchEditAndComplete \
+    -only-testing:MemoryUITests/MemoryUITests/testFigmaRecordsCanUseLegacyAppearance \
     test -quiet
 fi
 
