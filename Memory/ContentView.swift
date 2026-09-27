@@ -222,16 +222,7 @@ struct ContentView: View {
         .task {
 #if DEBUG
             if VoiceReviewTesting.isEnabled {
-                if VoiceReviewTesting.isRecordsEnabled {
-                    for item in FigmaRecordsTesting.items() { modelContext.insert(item) }
-#if os(macOS)
-                    desktopSection = .all
-#else
-                    selectedSection = .all
-#endif
-                } else {
-                    voiceReviewSession = VoiceReviewTesting.session()
-                }
+                voiceReviewSession = VoiceReviewTesting.session()
                 return
             }
 #endif
@@ -755,13 +746,7 @@ struct ContentView: View {
     ) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                if desktopSection == .all, FigmaRecordsRollout.isEnabled {
-                    FigmaRecordsHeading(inboxCount: inboxItems.count) {
-                        selectDesktopSection(.inbox)
-                    }
-                } else {
-                    desktopPageHeader(title: title, caption: nil)
-                }
+                desktopPageHeader(title: title, caption: nil)
                 search
                 content
             }
@@ -776,8 +761,6 @@ struct ContentView: View {
                 desktopRecordsCaptureControl
             }
         }
-        .background(desktopSection == .all && FigmaRecordsRollout.isEnabled
-            ? FigmaRecordsTokens.background : MemoryTheme.background)
     }
 
     private var desktopPrioritySection: some View {
@@ -1035,7 +1018,7 @@ struct ContentView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .background((mobileUsesFigmaRecords ? FigmaRecordsTokens.background : MemoryTheme.background).ignoresSafeArea())
+            .background(MemoryTheme.background.ignoresSafeArea())
         }
         .animation(.easeOut(duration: 0.18), value: isKeyboardVisible)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
@@ -1053,20 +1036,10 @@ struct ContentView: View {
         } else if isInboxPresented && !isMobileProfilePresented {
             mobileSecondaryHeader(title: "Входящие", backAction: closeInbox)
                 .transition(.opacity)
-        } else if mobileUsesFigmaRecords {
-            FigmaRecordsPrimaryHeader(
-                onHome: { navigateMobile(to: .now) },
-                onProfile: openMobileProfile
-            )
         } else {
             mobilePrimaryHeader
                 .transition(.opacity)
         }
-    }
-
-    private var mobileUsesFigmaRecords: Bool {
-        FigmaRecordsRollout.isEnabled && selectedSection == .all
-            && !isMobileProfilePresented && !isInboxPresented
     }
 
     private var mobilePrimaryHeader: some View {
@@ -1196,11 +1169,8 @@ struct ContentView: View {
 
     private var mobileDatedRecordsContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: FigmaRecordsRollout.isEnabled ? 24 : 18, pinnedViews: [.sectionHeaders]) {
-                if FigmaRecordsRollout.isEnabled {
-                    FigmaRecordsHeading(inboxCount: inboxItems.count, onInbox: openInbox)
-                } else {
-                  HStack(spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 18, pinnedViews: [.sectionHeaders]) {
+                HStack(spacing: 12) {
                     Text("Все записи")
                         .font(.system(size: 26, weight: .medium, design: .rounded))
 
@@ -1234,7 +1204,6 @@ struct ContentView: View {
                     .accessibilityHint("Открывает напоминания без срока")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                }
 
                 Section {
                     activeItemsListContent
@@ -1242,18 +1211,18 @@ struct ContentView: View {
                 } header: {
                     searchField
                         .padding(.vertical, 8)
-                        .background(FigmaRecordsRollout.isEnabled ? FigmaRecordsTokens.background : MemoryTheme.background)
+                        .background(MemoryTheme.background)
                         .zIndex(5)
                 }
             }
             .frame(maxWidth: 760)
-            .padding(.horizontal, FigmaRecordsRollout.isEnabled ? FigmaRecordsTokens.pageInset : 22)
-            .padding(.top, FigmaRecordsRollout.isEnabled ? 34 : 20)
+            .padding(.horizontal, 22)
+            .padding(.top, 20)
             .padding(.bottom, 104)
             .frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(FigmaRecordsRollout.isEnabled ? FigmaRecordsTokens.background : MemoryTheme.background)
+        .background(MemoryTheme.background)
     }
 
     private var mobileInboxContent: some View {
@@ -2216,23 +2185,15 @@ struct ContentView: View {
             ForEach(datedItemGroups) { group in
                 let groupItems = groupedActiveItems[group] ?? []
                 if !groupItems.isEmpty {
-                    VStack(alignment: .leading, spacing: FigmaRecordsRollout.isEnabled ? 16 : 12) {
-                        if FigmaRecordsRollout.isEnabled {
-                            Text(group.title)
-                                .font(FigmaRecordsTokens.font(16, weight: .medium))
-                                .foregroundStyle(FigmaRecordsTokens.secondary)
-                                .accessibilityAddTraits(.isHeader)
-                                .accessibilityValue("Записей: \(groupItems.count)")
-                        } else {
-                            MemorySectionHeader(
-                                title: group.title,
-                                subtitle: nil,
-                                count: groupItems.count,
-                                icon: group.icon,
-                                color: group.color
-                            )
-                        }
-                        taskRows(groupItems, usesFigmaDesign: FigmaRecordsRollout.isEnabled)
+                    VStack(alignment: .leading, spacing: 12) {
+                        MemorySectionHeader(
+                            title: group.title,
+                            subtitle: nil,
+                            count: groupItems.count,
+                            icon: group.icon,
+                            color: group.color
+                        )
+                        taskRows(groupItems)
                     }
                 }
             }
@@ -2242,9 +2203,7 @@ struct ContentView: View {
     private var searchField: some View {
         HStack(spacing: 11) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Что ищем?", text: $searchText)
-                .textFieldStyle(.plain)
-                .accessibilityIdentifier("records-search")
+            TextField("Что ищем?", text: $searchText).textFieldStyle(.plain)
             if !searchText.isEmpty {
                 Button { searchText = "" } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
@@ -2271,8 +2230,8 @@ struct ContentView: View {
         .memoryCard()
     }
 
-    private func taskRows(_ source: [Item], usesFigmaDesign: Bool = false) -> some View {
-        LazyVStack(spacing: usesFigmaDesign ? FigmaRecordsTokens.listGap : 10) {
+    private func taskRows(_ source: [Item]) -> some View {
+        LazyVStack(spacing: 10) {
             ForEach(source, id: \.persistentModelID) { item in
                 MemoryItemRow(
                     item: item,
@@ -2281,8 +2240,7 @@ struct ContentView: View {
                         guard !suppressItemOpening else { return }
                         editingItem = item
                     },
-                    onDelete: { delete(item) },
-                    usesFigmaDesign: usesFigmaDesign
+                    onDelete: { delete(item) }
                 )
             }
         }
