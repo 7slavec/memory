@@ -5,6 +5,7 @@ struct MemoryItemRow: View {
     var onToggle: (() -> Void)? = nil
     let onEdit: () -> Void
     var onDelete: (() -> Void)? = nil
+    var showsContextMenu = true
 
     var body: some View {
         HStack(spacing: 14) {
@@ -46,9 +47,11 @@ struct MemoryItemRow: View {
         .padding(.vertical, 15)
         .memoryEntryCard(isEvent: item.isEvent)
         .contextMenu {
-            Button(action: onEdit) { Label("Изменить", systemImage: "pencil") }
-            if let onDelete {
-                Button(role: .destructive, action: onDelete) { Label("Удалить", systemImage: "trash") }
+            if showsContextMenu {
+                Button(action: onEdit) { Label("Изменить", systemImage: "pencil") }
+                if let onDelete {
+                    Button(role: .destructive, action: onDelete) { Label("Удалить", systemImage: "trash") }
+                }
             }
         }
     }

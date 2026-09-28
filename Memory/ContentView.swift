@@ -221,8 +221,20 @@ struct ContentView: View {
         }
         .task {
 #if DEBUG
+            if VoiceReviewTesting.isUnitTestHost { return }
             if VoiceReviewTesting.isEnabled {
-                voiceReviewSession = VoiceReviewTesting.session()
+                if VoiceReviewTesting.isLinksEnabled {
+                    let first = Item(title: "Отправить заявку", notificationsEnabled: false)
+                    let second = Item(title: "Вебинар по дизайну", notificationsEnabled: false)
+                    let third = Item(title: "Прочитать материалы", notificationsEnabled: false)
+                    modelContext.insert(first)
+                    modelContext.insert(second)
+                    modelContext.insert(third)
+                    try? modelContext.save()
+                    editingItem = first
+                } else {
+                    voiceReviewSession = VoiceReviewTesting.session()
+                }
                 return
             }
 #endif
@@ -256,11 +268,11 @@ struct ContentView: View {
         }
 #if os(iOS)
         .fullScreenCover(item: $editingItem) { item in
-            ItemEditorView(
+            RecordEditorFlow(
                 item: item,
-                onSave: { title, details, kind, date, endDate, reminderOffsets in
+                onSave: { current, title, details, kind, date, endDate, reminderOffsets in
                     update(
-                        item,
+                        current,
                         title: title,
                         details: details,
                         entryKind: kind,
@@ -269,8 +281,9 @@ struct ContentView: View {
                         reminderOffsets: reminderOffsets
                     )
                 },
-                onToggleCompleted: { toggleCompleted(item) },
-                onDelete: { delete(item) }
+                onToggleCompleted: { toggleCompleted($0) },
+                onDelete: { delete($0) },
+                onDismiss: { editingItem = nil }
             )
         }
         .fullScreenCover(item: $draftEditingItem) { draft in
@@ -286,10 +299,12 @@ struct ContentView: View {
                         reminderOffsets: reminderOffsets
                     ) != nil {
                         detailedDraftCommitVersion += 1
+                        return true
                     }
+                    return false
                 },
-                onToggleCompleted: {},
-                onDelete: {},
+                onToggleCompleted: { true },
+                onDelete: { true },
                 isNew: true
             )
         }
@@ -638,12 +653,12 @@ struct ContentView: View {
     }
 
     private func desktopItemEditor(_ item: Item, compact: Bool) -> some View {
-        ItemEditorView(
+        RecordEditorFlow(
             item: item,
-            onSave: { title, details, kind, date, endDate, reminderOffsets in
+            onSave: { current, title, details, kind, date, endDate, reminderOffsets in
                 if !isEditingNewDesktopItem {
-                    update(
-                        item,
+                    return update(
+                        current,
                         title: title,
                         details: details,
                         entryKind: kind,
@@ -661,12 +676,13 @@ struct ContentView: View {
                         reminderOffsets: reminderOffsets
                     ) != nil {
                         detailedDraftCommitVersion += 1
+                        return true
                     }
+                    return false
                 }
             },
-            onToggleCompleted: { toggleCompleted(item) },
-            onDelete: { delete(item) },
-            isEmbedded: true,
+            onToggleCompleted: { toggleCompleted($0) },
+            onDelete: { delete($0) },
             isCompactDesktopPane: compact,
             isNew: isEditingNewDesktopItem,
             onDismiss: {
@@ -2706,7 +2722,7 @@ struct ContentView: View {
         }
     }
 
-    private func update(
+    @discardableResult private func update(
         _ item: Item,
         title: String,
         details: String?,
@@ -2714,7 +2730,12 @@ struct ContentView: View {
         dueDate: Date?,
         endDate: Date?,
         reminderOffsets: [Int]
-    ) {
+    ) -> Bool {
+#if DEBUG
+        if VoiceReviewTesting.isLinksEnabled && ProcessInfo.processInfo.arguments.contains("--uitest-save-failure") {
+            return false
+        }
+#endif
         item.title = title
         item.details = Item.normalizedDetails(details)
         item.entryKind = entryKind
@@ -2722,7 +2743,7 @@ struct ContentView: View {
         item.endDate = entryKind == .event ? endDate : nil
         item.setReminderOffsets(dueDate == nil ? [] : reminderOffsets)
         item.updatedAt = .now
-        guard saveChanges() else { return }
+        guard saveChanges() else { return false }
         VoicePersonalizationStore.confirmCorrection(
             itemID: item.id,
             title: item.title,
@@ -2731,6 +2752,7 @@ struct ContentView: View {
         )
         scheduleReminder(for: item)
         account.markLocalChange(modelContext: modelContext)
+        return true
     }
 
     private func showCaptureConfirmation(for item: Item) {
@@ -2765,19 +2787,23 @@ struct ContentView: View {
         }
     }
 
-    private func toggleCompleted(_ item: Item) {
+    @discardableResult private func toggleCompleted(_ item: Item) -> Bool {
         withAnimation(.snappy) { item.setCompleted(!item.isCompleted) }
-        guard saveChanges() else { return }
+        guard saveChanges() else { return false }
         item.isCompleted ? ReminderScheduler.cancel(id: item.id) : scheduleReminder(for: item)
         account.markLocalChange(modelContext: modelContext)
+        return true
     }
 
-    private func delete(_ item: Item) {
+    @discardableResult private func delete(_ item: Item) -> Bool {
         let id = item.id
+        do { try RecordLinkService.markDeleted(for: item, context: modelContext) }
+        catch { modelContext.rollback(); errorMessage = error.localizedDescription; return false }
         withAnimation(.snappy) { item.markDeleted() }
-        guard saveChanges() else { return }
+        guard saveChanges() else { return false }
         ReminderScheduler.cancel(id: id)
         account.markLocalChange(modelContext: modelContext)
+        return true
     }
 
     @discardableResult private func saveChanges() -> Bool {

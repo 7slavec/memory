@@ -193,8 +193,9 @@ struct MemoryApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,
+            RecordLink.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: VoiceReviewTesting.isEnabled || DesignCatalogMode.isEnabled)
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: VoiceReviewTesting.usesIsolatedStorage || DesignCatalogMode.isEnabled)
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])

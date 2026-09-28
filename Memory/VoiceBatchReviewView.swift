@@ -24,9 +24,10 @@ struct VoiceBatchReviewView<Header: View>: View {
                             endDate: endDate,
                             reminderOffsets: reminderOffsets
                         )
+                        return true
                     },
-                    onToggleCompleted: {},
-                    onDelete: { session.remove(selectedEntryID) },
+                    onToggleCompleted: { true },
+                    onDelete: { session.remove(selectedEntryID); return true },
                     isEmbedded: true,
                     isNew: true,
                     saveActionTitle: "Применить",

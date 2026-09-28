@@ -13,9 +13,11 @@ struct ItemEditorView: View {
     @AppStorage(ReminderScheduler.applicationNotificationsEnabledKey)
     private var applicationNotificationsEnabled = true
     let item: Item
-    let onSave: (String, String?, EntryKind, Date?, Date?, [Int]) -> Void
-    let onToggleCompleted: () -> Void
-    let onDelete: () -> Void
+    let onSave: (String, String?, EntryKind, Date?, Date?, [Int]) -> Bool
+    let onToggleCompleted: () -> Bool
+    let onDelete: () -> Bool
+    let onOpenLinks: (() -> Void)?
+    let linkedCount: Int
     let isEmbedded: Bool
     let isCompactDesktopPane: Bool
     let onDismiss: () -> Void
@@ -32,6 +34,8 @@ struct ItemEditorView: View {
     @State private var reminderOffsets: Set<Int>
     @State private var isDeleteConfirmationPresented = false
     @State private var isDiscardConfirmationPresented = false
+    @State private var isLinksConfirmationPresented = false
+    @State private var isSaveErrorPresented = false
 #if os(macOS)
     @State private var isCalendarPresented = false
     @State private var isTimePickerPresented = false
@@ -44,13 +48,15 @@ struct ItemEditorView: View {
 
     init(
         item: Item,
-        onSave: @escaping (String, String?, EntryKind, Date?, Date?, [Int]) -> Void,
-        onToggleCompleted: @escaping () -> Void,
-        onDelete: @escaping () -> Void,
+        onSave: @escaping (String, String?, EntryKind, Date?, Date?, [Int]) -> Bool,
+        onToggleCompleted: @escaping () -> Bool,
+        onDelete: @escaping () -> Bool,
         isEmbedded: Bool = false,
         isCompactDesktopPane: Bool = false,
         isNew: Bool = false,
         saveActionTitle: String? = nil,
+        linkedCount: Int = 0,
+        onOpenLinks: (() -> Void)? = nil,
         onDismiss: @escaping () -> Void = {}
     ) {
         self.item = item
@@ -62,6 +68,8 @@ struct ItemEditorView: View {
         self.isNew = isNew
         self.saveActionTitle = saveActionTitle
         self.onDismiss = onDismiss
+        self.linkedCount = linkedCount
+        self.onOpenLinks = onOpenLinks
         _title = State(initialValue: item.title)
         _details = State(initialValue: item.details ?? "")
         _isDescriptionPresented = State(initialValue: item.details != nil)
@@ -75,11 +83,26 @@ struct ItemEditorView: View {
     }
 
     var body: some View {
+        Group {
 #if os(macOS)
-        macEditor
+            macEditor
 #else
-        mobileEditor
+            mobileEditor
 #endif
+        }
+        .alert("Не удалось сохранить", isPresented: $isSaveErrorPresented) {
+            Button("ОК", role: .cancel) {}
+        } message: {
+            Text("Изменения остались в редакторе. Попробуйте ещё раз.")
+        }
+        .confirmationDialog("Сохранить изменения перед переходом?", isPresented: $isLinksConfirmationPresented, titleVisibility: .visible) {
+            Button("Сохранить и перейти") {
+                if persistChanges() { onOpenLinks?() } else { isSaveErrorPresented = true }
+            }
+            .disabled(!canSave)
+            Button("Перейти без изменений", role: .destructive) { onOpenLinks?() }
+            Button("Отмена", role: .cancel) {}
+        }
     }
 
 #if os(iOS)
@@ -101,6 +124,7 @@ struct ItemEditorView: View {
 
                             mobileScheduleCard
                             mobileNotificationCard
+                            linksButton
                         }
 
                         if !isNew && entryKind == .reminder {
@@ -132,8 +156,7 @@ struct ItemEditorView: View {
             titleVisibility: .visible
         ) {
             Button("Удалить", role: .destructive) {
-                onDelete()
-                closeEditor()
+                deleteAndDismiss()
             }
             Button("Отмена", role: .cancel) {}
         } message: {
@@ -219,6 +242,7 @@ struct ItemEditorView: View {
                     mobileFocusedField = nil
                 }
                 .accessibilityLabel("Текст напоминания")
+                .accessibilityIdentifier("recordEditorTitle")
 
             if isDescriptionPresented {
                 Divider()
@@ -589,6 +613,7 @@ struct ItemEditorView: View {
 
                     macScheduleCard
                     macNotificationCard
+                    linksButton
                 }
                 .padding(isCompactDesktopPane ? 18 : 24)
             }
@@ -615,8 +640,7 @@ struct ItemEditorView: View {
             titleVisibility: .visible
         ) {
             Button("Удалить", role: .destructive) {
-                onDelete()
-                closeEditor()
+                deleteAndDismiss()
             }
             Button("Отмена", role: .cancel) {}
         } message: {
@@ -716,6 +740,7 @@ struct ItemEditorView: View {
                 )
                 .lineSpacing(2)
                 .lineLimit(1...6)
+                .accessibilityIdentifier("recordEditorTitle")
 
             if isDescriptionPresented {
                 Divider()
@@ -1229,17 +1254,46 @@ struct ItemEditorView: View {
     }
 
     private func saveAndDismiss() {
-        persistChanges()
+        guard persistChanges() else { isSaveErrorPresented = true; return }
         closeEditor()
     }
 
     private func saveToggleAndDismiss() {
-        onToggleCompleted()
-        persistChanges()
+        guard persistChanges(), onToggleCompleted() else { isSaveErrorPresented = true; return }
         closeEditor()
     }
 
-    private func persistChanges() {
+    private func deleteAndDismiss() {
+        guard onDelete() else { isSaveErrorPresented = true; return }
+        closeEditor()
+    }
+
+    @ViewBuilder private var linksButton: some View {
+        if let onOpenLinks, !isNew {
+            Button {
+                if hasUnsavedChanges { isLinksConfirmationPresented = true }
+                else { onOpenLinks() }
+            } label: {
+                HStack(spacing: 12) {
+                    Text("Связанные записи")
+                    Spacer(minLength: 8)
+                    if linkedCount > 0 { Text("\(linkedCount)").foregroundStyle(.secondary) }
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+                .font(.body.weight(.medium))
+                .foregroundStyle(.primary)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 17)
+                .padding(.vertical, 6)
+                .memoryCard()
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("openRecordLinks")
+        }
+    }
+
+    private func persistChanges() -> Bool {
         onSave(
             trimmedTitle,
             Item.normalizedDetails(trimmedDetails),

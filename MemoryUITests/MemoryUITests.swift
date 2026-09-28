@@ -9,6 +9,71 @@ import XCTest
 
 final class MemoryUITests: XCTestCase {
 
+    @MainActor func testManualLinksUseOneEditorAndUnlinkKeepsRecords() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-links"]
+        app.launch()
+        ensureWindow(app)
+        XCTAssertTrue(app.buttons["openRecordLinks"].waitForExistence(timeout: 10))
+        app.buttons["openRecordLinks"].tap()
+        XCTAssertEqual(app.buttons.matching(identifier: "Назад").count, 1)
+        app.buttons["Связать запись"].tap()
+        let webinar = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Вебинар по дизайну")).firstMatch
+        XCTAssertTrue(webinar.waitForExistence(timeout: 5))
+        webinar.tap()
+        XCTAssertTrue(app.buttons["Связать запись"].waitForExistence(timeout: 5))
+        webinar.tap()
+        XCTAssertTrue(app.buttons["openRecordLinks"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "Назад").count, 1)
+        app.buttons["openRecordLinks"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Отправить заявку")).firstMatch.exists)
+        app.buttons["Назад"].tap()
+        app.buttons["Назад"].tap()
+        XCTAssertTrue(app.buttons["Убрать связь с Вебинар по дизайну"].waitForExistence(timeout: 5))
+        app.buttons["Убрать связь с Вебинар по дизайну"].tap()
+        XCTAssertTrue(app.staticTexts["Пока нет связанных записей"].waitForExistence(timeout: 5))
+        app.buttons["Связать запись"].tap()
+        XCTAssertTrue(webinar.waitForExistence(timeout: 5))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Link picker reuses compact cards"; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    @MainActor func testEditorStaysOpenWhenSaveFails() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-links", "--uitest-save-failure"]
+        app.launch()
+        ensureWindow(app)
+        XCTAssertTrue(app.buttons["openRecordLinks"].waitForExistence(timeout: 10))
+        let title = app.textFields["recordEditorTitle"]
+        title.tap()
+#if os(macOS)
+        title.typeKey("a", modifierFlags: .command)
+        title.typeText("Сохранить мой черновик")
+#else
+        title.typeText(" — Сохранить мой черновик")
+#endif
+        let save = app.buttons["Сохранить"]
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Не удалось сохранить"].waitForExistence(timeout: 5))
+#if os(macOS)
+        app.sheets.buttons["ОК"].tap()
+#else
+        app.alerts.buttons["ОК"].tap()
+#endif
+        XCTAssertTrue(app.buttons["openRecordLinks"].exists)
+        XCTAssertTrue((title.value as? String)?.contains("Сохранить мой черновик") == true)
+        XCTAssertEqual(app.buttons.matching(identifier: "Назад").count, 1)
+    }
+
+    @MainActor private func ensureWindow(_ app: XCUIApplication) {
+#if os(macOS)
+        if !app.windows.firstMatch.waitForExistence(timeout: 2) {
+            app.menuBars.menuBarItems["File"].click()
+            app.menuBars.menuItems["New Window"].click()
+        }
+#endif
+    }
+
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.
 

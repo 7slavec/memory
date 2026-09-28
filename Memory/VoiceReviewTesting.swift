@@ -3,9 +3,27 @@ import Foundation
 // A launch-only fixture exercises the real page composition without speech,
 // account access, notifications, or writes to the user's records.
 enum VoiceReviewTesting {
+    static var isUnitTestHost: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil && !isEnabled
+#else
+        false
+#endif
+    }
+
+    static var usesIsolatedStorage: Bool { isEnabled || isUnitTestHost }
+
     static var isEnabled: Bool {
 #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--uitest-voice-review")
+        ProcessInfo.processInfo.arguments.contains("--uitest-voice-review") || isLinksEnabled
+#else
+        false
+#endif
+    }
+
+    static var isLinksEnabled: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--uitest-links")
 #else
         false
 #endif

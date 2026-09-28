@@ -20,6 +20,7 @@ final class AccountSyncController: ObservableObject {
     @Published private(set) var defaultReminderMinutes: Int
     @Published private(set) var defaultEntryKind: EntryKind
     @Published private(set) var lastSignedInEmail: String?
+    @Published private(set) var linkSyncError: String?
 
     let isConfigured: Bool
     private let client: SupabaseClient?
@@ -27,6 +28,7 @@ final class AccountSyncController: ObservableObject {
     private var needsAnotherSynchronization = false
     private var realtimeChannel: RealtimeChannelV2?
     private var realtimeUserID: String?
+    private var linkRealtimeEnabled = false
     private var realtimeListenerTasks: [Task<Void, Never>] = []
     private let deviceID = UUID().uuidString.lowercased()
     private static let defaultReminderKey = "defaultReminderMinutes"
@@ -40,7 +42,7 @@ final class AccountSyncController: ObservableObject {
             .flatMap(EntryKind.init(rawValue:)) ?? .reminder
         lastSignedInEmail = UserDefaults.standard.string(forKey: Self.lastSignedInEmailKey)
 
-        if !VoiceReviewTesting.isEnabled, !DesignCatalogMode.isEnabled, let configuration = SupabaseConfiguration.current {
+        if !VoiceReviewTesting.usesIsolatedStorage, !DesignCatalogMode.isEnabled, let configuration = SupabaseConfiguration.current {
             client = SupabaseClient(
                 supabaseURL: configuration.url,
                 supabaseKey: configuration.publishableKey
@@ -114,6 +116,7 @@ final class AccountSyncController: ObservableObject {
         await stopRealtime()
         try await client.auth.signOut(scope: .local)
         userID = nil
+        linkSyncError = nil
         email = nil
         state = .ready
     }
@@ -146,6 +149,8 @@ final class AccountSyncController: ObservableObject {
                     .eq("user_id", value: userID)
                     .execute()
                     .value
+
+                guard self.userID == userID else { return }
 
                 let allLocalItems = try modelContext.fetch(FetchDescriptor<Item>())
 
@@ -184,7 +189,32 @@ final class AccountSyncController: ObservableObject {
                 }
 
                 try modelContext.save()
-                state = .synced(.now)
+                do {
+                    let remoteLinks: [RemoteRecordLink] = try await client.from("task_links")
+                        .select().eq("user_id", value: userID).execute().value
+                    guard self.userID == userID else { return }
+                    let linkUploads = try RecordLinkReconciler.merge(remoteLinks, userID: userUUID, context: modelContext)
+                    if !linkUploads.isEmpty {
+                        try await client.from("task_links").upsert(linkUploads).execute()
+                        await broadcastTasksChanged()
+                    }
+                    linkSyncError = nil
+                    state = .synced(.now)
+                    if !linkRealtimeEnabled {
+                        linkRealtimeEnabled = true
+                        await stopRealtime()
+                        await ensureRealtime(modelContext: modelContext, userID: userID, userUUID: userUUID)
+                    }
+                } catch {
+                    // Ordinary records have already synced. Keep links locally and retry later.
+                    let schemaUnavailable = (error as? PostgrestError)?.code == "PGRST205"
+                        || (error as? PostgrestError)?.code == "42P01"
+                    linkSyncError = schemaUnavailable
+                        ? "Синхронизация связей ещё не подключена"
+                        : "Связи сохранены на устройстве. Повторить синхронизацию"
+                    state = schemaUnavailable ? .synced(.now) : .failed("Не удалось синхронизировать связи")
+                    needsAnotherSynchronization = false
+                }
             } catch {
                 state = .failed(error.localizedDescription)
                 needsAnotherSynchronization = false
@@ -290,6 +320,7 @@ final class AccountSyncController: ObservableObject {
         let nextUserID = userID.uuidString.lowercased()
         if self.userID != nextUserID {
             await stopRealtime()
+            linkSyncError = nil
         }
         self.userID = nextUserID
         self.email = email
@@ -359,6 +390,11 @@ final class AccountSyncController: ObservableObject {
             table: "tasks",
             filter: .eq("user_id", value: userUUID)
         )
+        // Do not let an undeployed optional table break realtime for existing records.
+        let linkEvents = linkRealtimeEnabled ? channel.postgresChange(
+            AnyAction.self, schema: "public", table: "task_links",
+            filter: .eq("user_id", value: userUUID)
+        ) : nil
 
         realtimeChannel = channel
         realtimeUserID = userID
@@ -380,6 +416,14 @@ final class AccountSyncController: ObservableObject {
                     }
                 }
             ]
+            if let linkEvents {
+                realtimeListenerTasks.append(Task { [weak self] in
+                    for await _ in linkEvents {
+                        guard !Task.isCancelled else { break }
+                        await self?.synchronize(modelContext: modelContext)
+                    }
+                })
+            }
         } catch {
             realtimeChannel = nil
             realtimeUserID = nil
