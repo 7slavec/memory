@@ -10,7 +10,7 @@ struct MemoryItemRow: View {
     var onOpenLinks: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(alignment: .top, spacing: 10) {
             if !item.isEvent, let onToggle {
                 Button(action: onToggle) {
                     Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
@@ -18,6 +18,7 @@ struct MemoryItemRow: View {
                         .foregroundStyle(item.isCompleted ? MemoryTheme.accent : Color.secondary.opacity(0.65))
                 }
                 .buttonStyle(.plain)
+                .padding(.top, 4)
             }
             Button(action: onEdit) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -46,8 +47,7 @@ struct MemoryItemRow: View {
             .buttonStyle(.plain)
             if linkedCount > 0 {
                 Button(action: onOpenLinks ?? onEdit) {
-                    MemoryLinkBadge(count: linkedCount)
-                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    MemoryLinkCircle(count: linkedCount)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("recordLinksBadge")

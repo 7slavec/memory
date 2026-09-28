@@ -12,22 +12,32 @@ struct RecordLinksView: View {
     @State private var isChoosing = false
     @State private var search = ""
     @State private var errorMessage: String?
-    @State private var confirmsUnlinkAll = false
+    @State private var anchorID: UUID
 
-    private var linkedIDs: Set<UUID> {
-        Set(links.filter { $0.ownerID == account.userID && $0.deletedAt == nil }
-            .compactMap { $0.otherID(than: item.id) })
+    init(item: Item, onOpen: @escaping (Item) -> Void) {
+        self.item = item
+        self.onOpen = onOpen
+        _anchorID = State(initialValue: item.id)
+    }
+
+    private var groupIDs: Set<UUID> {
+        RecordLinkIndex(items: items, links: links, ownerID: account.userID).memberIDs(for: anchorID)
     }
     private var visibleItems: [Item] {
-        items.filter { $0.ownerID == account.userID && $0.deletedAt == nil && $0.id != item.id }
+        items.filter { $0.ownerID == account.userID && $0.deletedAt == nil }
     }
     private var displayedItems: [Item] {
-        let ids = linkedIDs
+        let ids = groupIDs
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return visibleItems.filter {
             (isChoosing ? !ids.contains($0.id) && RecordLinkIndex.canAdd($0) : ids.contains($0.id))
                 && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)
                     || ($0.details?.localizedCaseInsensitiveContains(query) ?? false))
+        }.sorted {
+            let lhs = $0.dueDate ?? .distantFuture, rhs = $1.dueDate ?? .distantFuture
+            if lhs != rhs { return lhs < rhs }
+            if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+            return $0.id.uuidString < $1.id.uuidString
         }
     }
 
@@ -54,22 +64,35 @@ struct RecordLinksView: View {
                             .font(.body).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 100)
                     }
-                    LazyVStack(spacing: 10) {
+                    LazyVStack(spacing: 8) {
                         ForEach(displayedItems) { other in
                             HStack(spacing: 8) {
                                 MemoryItemRow(item: other, onEdit: {
-                                    if isChoosing { changeLink(true, other: other) }
-                                    else { dismiss(); onOpen(other) }
+                                    if isChoosing { add(other) }
+                                    else {
+                                        if other.id != item.id { onOpen(other) }
+                                        dismiss()
+                                    }
                                 }, showsContextMenu: false)
-                                if !isChoosing {
-                                    Button { changeLink(false, other: other) } label: {
-                                        Image(systemName: "link.badge.minus")
-                                            .font(.system(size: 17, weight: .medium))
+                                .overlay {
+                                    if !isChoosing && other.id == item.id {
+                                        RoundedRectangle(cornerRadius: 24)
+                                            .stroke(MemoryTheme.accent.opacity(0.4), lineWidth: 1)
+                                            .allowsHitTesting(false)
+                                    }
+                                }
+                                .accessibilityHint(other.id == item.id ? "Текущая запись" : "Открыть запись")
+                                if !isChoosing && groupIDs.count > 1 {
+                                    Button { remove(other) } label: {
+                                        Image(systemName: "minus")
+                                            .font(.system(size: 14, weight: .semibold))
+                                            .frame(width: 32, height: 32)
+                                            .background(.primary.opacity(0.06), in: Circle())
                                             .frame(width: 44, height: 44)
                                             .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain).foregroundStyle(.secondary)
-                                    .accessibilityLabel("Убрать связь с \(other.title)")
+                                    .accessibilityLabel("Исключить из связи: \(other.title)")
                                 }
                             }
                         }
@@ -80,8 +103,8 @@ struct RecordLinksView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            if !isChoosing && !linkedIDs.isEmpty {
-                Button("Разорвать все связи", role: .destructive) { confirmsUnlinkAll = true }
+            if !isChoosing && groupIDs.count > 1 {
+                Button("Разорвать связь", role: .destructive, action: dissolve)
                     .buttonStyle(.plain)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.red)
@@ -94,15 +117,11 @@ struct RecordLinksView: View {
         .alert("Не удалось изменить связь", isPresented: Binding(
             get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
         )) { Button("ОК", role: .cancel) {} } message: { Text(errorMessage ?? "") }
-        .confirmationDialog("Разорвать все связи этой записи?", isPresented: $confirmsUnlinkAll, titleVisibility: .visible) {
-            Button("Разорвать связи", role: .destructive) {
-                do {
-                    try RecordLinkService.unlinkAll(for: item, ownerID: account.userID, context: modelContext)
-                    account.markLocalChange(modelContext: modelContext)
-                } catch { errorMessage = error.localizedDescription }
-            }
-            Button("Отмена", role: .cancel) {}
-        } message: { Text("Сами записи останутся. Другие связи не изменятся.") }
+        .onChange(of: account.userID) { _, _ in dismiss() }
+#if os(macOS)
+        // Compact for a small group, bounded and scrollable for long text/many records.
+        .frame(height: min(480, CGFloat(isChoosing ? 180 : 152) + CGFloat(displayedItems.count) * 80))
+#endif
     }
 
     private var header: some View {
@@ -135,7 +154,7 @@ struct RecordLinksView: View {
             .accessibilityLabel("Закрыть связи")
         }
         .padding(.horizontal, 18)
-        .frame(height: 64)
+        .frame(minHeight: 64)
     }
 
     private var headerTitle: some View {
@@ -143,12 +162,31 @@ struct RecordLinksView: View {
             .font(.system(size: 17, weight: .medium, design: .rounded))
     }
 
-    private func changeLink(_ enabled: Bool, other: Item) {
+    private func add(_ other: Item) {
+        guard let anchor = visibleItems.first(where: { $0.id == anchorID }) else { return }
         do {
-            try RecordLinkService.setLinked(enabled, first: item, second: other,
-                                            ownerID: account.userID, context: modelContext)
-            if enabled { isChoosing = false; search = "" }
+            try RecordGroupService.add(other, to: anchor, ownerID: account.userID, context: modelContext)
+            isChoosing = false; search = ""
             account.markLocalChange(modelContext: modelContext)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func remove(_ other: Item) {
+        guard let anchor = visibleItems.first(where: { $0.id == anchorID }) else { return }
+        let nextAnchor = displayedItems.first { $0.id != other.id }?.id ?? item.id
+        do {
+            try RecordGroupService.remove(other, from: anchor, ownerID: account.userID, context: modelContext)
+            if anchorID == other.id { anchorID = nextAnchor }
+            account.markLocalChange(modelContext: modelContext)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func dissolve() {
+        guard let anchor = visibleItems.first(where: { $0.id == anchorID }) else { return }
+        do {
+            try RecordGroupService.dissolve(containing: anchor, ownerID: account.userID, context: modelContext)
+            account.markLocalChange(modelContext: modelContext)
+            dismiss()
         } catch { errorMessage = error.localizedDescription }
     }
 }

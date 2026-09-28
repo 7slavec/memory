@@ -17,13 +17,12 @@ struct RecordLinkTests {
         #expect(RecordLinkIndex(items: [a, b, c], links: links, ownerID: nil).count(for: a.id) == 2)
         try RecordLinkService.unlinkAll(for: a, ownerID: nil, context: context)
         let remaining = links.filter { $0.deletedAt == nil }
-        #expect(remaining.count == 1)
-        #expect(remaining.first?.id == RecordLink.key(b.id, c.id))
+        #expect(remaining.isEmpty)
         #expect([a, b, c].allSatisfy { $0.deletedAt == nil && !$0.isCompleted })
         #expect(try context.fetchCount(FetchDescriptor<Item>()) == 3)
         let index = RecordLinkIndex(items: [a, b, c], links: links, ownerID: nil)
         #expect(index.count(for: a.id) == 0)
-        #expect(index.count(for: b.id) == 1)
+        #expect(index.count(for: b.id) == 0)
     }
 
     @Test func linkCandidatesExcludeArchiveButIncludeInboxAndOverdue() {

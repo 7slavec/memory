@@ -5,7 +5,7 @@ extension View {
         popover(isPresented: isPresented) {
             RecordLinksPopupContent(item: item, onOpen: onOpen)
 #if os(macOS)
-                .frame(width: 420, height: 480)
+                .frame(width: 420)
 #else
                 .presentationCompactAdaptation(.sheet)
                 .presentationDetents([.medium, .large])

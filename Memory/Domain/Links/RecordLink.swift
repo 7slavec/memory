@@ -41,13 +41,7 @@ enum RecordLinkError: LocalizedError {
 @MainActor
 enum RecordLinkService {
     static func unlinkAll(for item: Item, ownerID: String?, context: ModelContext) throws {
-        guard item.ownerID == ownerID, item.deletedAt == nil, item.modelContext === context else {
-            throw RecordLinkError.unavailable
-        }
-        do {
-            try markDeleted(for: item, context: context)
-            try context.save()
-        } catch { context.rollback(); throw error }
+        try RecordGroupService.dissolve(containing: item, ownerID: ownerID, context: context)
     }
 
     static func setLinked(_ enabled: Bool, first: Item, second: Item, ownerID: String?, context: ModelContext) throws {
@@ -71,11 +65,6 @@ enum RecordLinkService {
 
     /// Called in the same save transaction as deleting a record.
     static func markDeleted(for item: Item, context: ModelContext) throws {
-        let id = item.id
-        let links = try context.fetch(FetchDescriptor<RecordLink>(predicate: #Predicate { $0.firstID == id || $0.secondID == id }))
-        for link in links where link.ownerID == item.ownerID && link.deletedAt == nil {
-            link.updatedAt = max(.now, link.updatedAt.addingTimeInterval(0.003))
-            link.deletedAt = link.updatedAt
-        }
+        try RecordGroupService.detachBeforeDeletion(item, context: context)
     }
 }

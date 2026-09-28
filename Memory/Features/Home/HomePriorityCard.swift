@@ -10,7 +10,7 @@ struct HomePriorityCard: View {
     @State private var showsLinks = false
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(alignment: .top, spacing: 10) {
             if !item.isEvent {
                 Button(action: onToggle) {
                     Image(systemName: "circle")
@@ -19,6 +19,7 @@ struct HomePriorityCard: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Отметить выполненным")
+                .padding(.top, 4)
             }
 
             Button(action: onEdit) {
@@ -54,14 +55,9 @@ struct HomePriorityCard: View {
 
             if linkedCount > 0 {
                 Button { showsLinks = true } label: {
-                    MemoryLinkBadge(count: linkedCount)
-                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    MemoryLinkCircle(count: linkedCount)
                 }
                 .buttonStyle(.plain)
-                .recordLinksPopup(item: item, isPresented: $showsLinks) { linked in
-                    showsLinks = false
-                    onOpenLinkedRecord?(linked)
-                }
             } else {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
@@ -93,6 +89,10 @@ struct HomePriorityCard: View {
                 )
         }
         .shadow(color: .black.opacity(0.05), radius: 14, y: 7)
+        .recordLinksPopup(item: item, isPresented: $showsLinks) { linked in
+            showsLinks = false
+            onOpenLinkedRecord?(linked)
+        }
     }
 
     private var dateLabel: String {
