@@ -16,7 +16,7 @@ struct ItemEditorView: View {
     let onSave: (String, String?, EntryKind, Date?, Date?, [Int]) -> Bool
     let onToggleCompleted: () -> Bool
     let onDelete: () -> Bool
-    let onOpenLinks: (() -> Void)?
+    let onOpenLinkedRecord: ((Item) -> Void)?
     let linkedCount: Int
     let isEmbedded: Bool
     let isCompactDesktopPane: Bool
@@ -35,6 +35,8 @@ struct ItemEditorView: View {
     @State private var isDeleteConfirmationPresented = false
     @State private var isDiscardConfirmationPresented = false
     @State private var isLinksConfirmationPresented = false
+    @State private var showsLinks = false
+    @State private var pendingLinkedRecord: Item?
     @State private var isSaveErrorPresented = false
 #if os(macOS)
     @State private var isCalendarPresented = false
@@ -56,7 +58,7 @@ struct ItemEditorView: View {
         isNew: Bool = false,
         saveActionTitle: String? = nil,
         linkedCount: Int = 0,
-        onOpenLinks: (() -> Void)? = nil,
+        onOpenLinkedRecord: ((Item) -> Void)? = nil,
         onDismiss: @escaping () -> Void = {}
     ) {
         self.item = item
@@ -69,7 +71,7 @@ struct ItemEditorView: View {
         self.saveActionTitle = saveActionTitle
         self.onDismiss = onDismiss
         self.linkedCount = linkedCount
-        self.onOpenLinks = onOpenLinks
+        self.onOpenLinkedRecord = onOpenLinkedRecord
         _title = State(initialValue: item.title)
         _details = State(initialValue: item.details ?? "")
         _isDescriptionPresented = State(initialValue: item.details != nil)
@@ -97,11 +99,11 @@ struct ItemEditorView: View {
         }
         .confirmationDialog("Сохранить изменения перед переходом?", isPresented: $isLinksConfirmationPresented, titleVisibility: .visible) {
             Button("Сохранить и перейти") {
-                if persistChanges() { onOpenLinks?() } else { isSaveErrorPresented = true }
+                if persistChanges() { openPendingLinkedRecord() } else { isSaveErrorPresented = true }
             }
             .disabled(!canSave)
-            Button("Перейти без изменений", role: .destructive) { onOpenLinks?() }
-            Button("Отмена", role: .cancel) {}
+            Button("Перейти без изменений", role: .destructive) { openPendingLinkedRecord() }
+            Button("Отмена", role: .cancel) { pendingLinkedRecord = nil }
         }
     }
 
@@ -124,7 +126,6 @@ struct ItemEditorView: View {
 
                             mobileScheduleCard
                             mobileNotificationCard
-                            linksButton
                         }
 
                         if !isNew && entryKind == .reminder {
@@ -292,7 +293,7 @@ struct ItemEditorView: View {
     }
 
     private var mobileKindPicker: some View {
-        entryKindToggle
+        entryChips
     }
 
     private var mobileScheduleCard: some View {
@@ -613,7 +614,6 @@ struct ItemEditorView: View {
 
                     macScheduleCard
                     macNotificationCard
-                    linksButton
                 }
                 .padding(isCompactDesktopPane ? 18 : 24)
             }
@@ -778,7 +778,7 @@ struct ItemEditorView: View {
     }
 
     private var macKindPicker: some View {
-        entryKindToggle
+        entryChips
     }
 
     private var macScheduleCard: some View {
@@ -1268,29 +1268,30 @@ struct ItemEditorView: View {
         closeEditor()
     }
 
-    @ViewBuilder private var linksButton: some View {
-        if let onOpenLinks, !isNew {
-            Button {
-                if hasUnsavedChanges { isLinksConfirmationPresented = true }
-                else { onOpenLinks() }
-            } label: {
-                HStack(spacing: 12) {
-                    Text("Связанные записи")
-                    Spacer(minLength: 8)
-                    if linkedCount > 0 { Text("\(linkedCount)").foregroundStyle(.secondary) }
-                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+    private var entryChips: some View {
+        HStack(spacing: 8) {
+            entryKindToggle
+            if onOpenLinkedRecord != nil, !isNew {
+                Button { showsLinks = true } label: {
+                    MemoryLinkBadge(count: linkedCount)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                 }
-                .font(.body.weight(.medium))
-                .foregroundStyle(.primary)
-                .frame(minHeight: 44)
-                .padding(.horizontal, 17)
-                .padding(.vertical, 6)
-                .memoryCard()
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("openRecordLinks")
+                .recordLinksPopup(item: item, isPresented: $showsLinks) { linked in
+                    pendingLinkedRecord = linked
+                    showsLinks = false
+                    if hasUnsavedChanges { isLinksConfirmationPresented = true }
+                    else { openPendingLinkedRecord() }
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("openRecordLinks")
         }
+    }
+
+    private func openPendingLinkedRecord() {
+        guard let linked = pendingLinkedRecord else { return }
+        pendingLinkedRecord = nil
+        onOpenLinkedRecord?(linked)
     }
 
     private func persistChanges() -> Bool {

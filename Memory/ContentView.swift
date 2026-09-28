@@ -154,6 +154,8 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var account: AccountSyncController
     @Query(sort: \Item.timestamp, order: .reverse) private var items: [Item]
+    @Query private var recordLinks: [RecordLink]
+    @State private var linkPopupItemID: UUID?
     @State private var selectedSection: MemorySection = .now
     @State private var searchText = ""
     @State private var editingItem: Item?
@@ -790,7 +792,9 @@ struct ContentView: View {
                     item: item,
                     isOverdue: desktopPriorityIsOverdue,
                     onToggle: { toggleCompleted(item) },
-                    onEdit: { editingItem = item }
+                    onEdit: { editingItem = item },
+                    linkedCount: RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID).count(for: item.id),
+                    onOpenLinkedRecord: { editingItem = $0 }
                 )
             } else {
                 TodayEmptyView(hasUpcomingItems: false)
@@ -984,6 +988,10 @@ struct ContentView: View {
                                 priorityItem: homePriorityItem,
                                 isPriorityOverdue: homePriorityIsOverdue,
                                 additionalPriorityCount: homeAdditionalPriorityCount,
+                                priorityLinkedCount: homePriorityItem.map {
+                                    RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID).count(for: $0.id)
+                                } ?? 0,
+                                onOpenPriorityLinkedRecord: { editingItem = $0 },
                                 detailCommitSignal: detailedDraftCommitVersion,
                                 remoteVoiceInterpreter: remoteVoiceInterpreter,
                                 onTogglePriority: {
@@ -2247,7 +2255,8 @@ struct ContentView: View {
     }
 
     private func taskRows(_ source: [Item]) -> some View {
-        LazyVStack(spacing: 10) {
+        let index = RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID)
+        return LazyVStack(spacing: 10) {
             ForEach(source, id: \.persistentModelID) { item in
                 MemoryItemRow(
                     item: item,
@@ -2256,8 +2265,20 @@ struct ContentView: View {
                         guard !suppressItemOpening else { return }
                         editingItem = item
                     },
-                    onDelete: { delete(item) }
+                    onDelete: { delete(item) },
+                    linkedCount: index.count(for: item.id),
+                    onOpenLinks: {
+                        guard !suppressItemOpening else { return }
+                        linkPopupItemID = item.id
+                    }
                 )
+                .recordLinksPopup(item: item, isPresented: Binding(
+                    get: { linkPopupItemID == item.id },
+                    set: { if !$0 && linkPopupItemID == item.id { linkPopupItemID = nil } }
+                )) { linked in
+                    linkPopupItemID = nil
+                    editingItem = linked
+                }
             }
         }
     }

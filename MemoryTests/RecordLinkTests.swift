@@ -5,6 +5,47 @@ import Testing
 
 @MainActor
 struct RecordLinkTests {
+    @Test func unlinkAllPreservesRecordsAndUnrelatedLinks() throws {
+        let context = try makeContext()
+        let a = Item(title: "Заявка"), b = Item(title: "Вебинар"), c = Item(title: "Материалы")
+        for item in [a, b, c] { context.insert(item) }
+        try context.save()
+        try RecordLinkService.setLinked(true, first: a, second: b, ownerID: nil, context: context)
+        try RecordLinkService.setLinked(true, first: a, second: c, ownerID: nil, context: context)
+        try RecordLinkService.setLinked(true, first: b, second: c, ownerID: nil, context: context)
+        let links = try context.fetch(FetchDescriptor<RecordLink>())
+        #expect(RecordLinkIndex(items: [a, b, c], links: links, ownerID: nil).count(for: a.id) == 2)
+        try RecordLinkService.unlinkAll(for: a, ownerID: nil, context: context)
+        let remaining = links.filter { $0.deletedAt == nil }
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.id == RecordLink.key(b.id, c.id))
+        #expect([a, b, c].allSatisfy { $0.deletedAt == nil && !$0.isCompleted })
+        #expect(try context.fetchCount(FetchDescriptor<Item>()) == 3)
+        let index = RecordLinkIndex(items: [a, b, c], links: links, ownerID: nil)
+        #expect(index.count(for: a.id) == 0)
+        #expect(index.count(for: b.id) == 1)
+    }
+
+    @Test func linkCandidatesExcludeArchiveButIncludeInboxAndOverdue() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let today = calendar.startOfDay(for: now)
+        let record = Item(title: "Входящие")
+        #expect(RecordLinkIndex.canAdd(record, now: now, calendar: calendar))
+        record.dueDate = today.addingTimeInterval(-86_400)
+        #expect(RecordLinkIndex.canAdd(record, now: now, calendar: calendar))
+        record.entryKind = .event
+        #expect(!RecordLinkIndex.canAdd(record, now: now, calendar: calendar))
+        record.endDate = today
+        #expect(RecordLinkIndex.canAdd(record, now: now, calendar: calendar))
+        record.entryKind = .reminder
+        record.setCompleted(true)
+        #expect(!RecordLinkIndex.canAdd(record, now: now, calendar: calendar))
+        record.setCompleted(false); record.markDeleted()
+        #expect(!RecordLinkIndex.canAdd(record, now: now, calendar: calendar))
+    }
+
     private func makeContext() throws -> ModelContext {
         let container = try ModelContainer(for: Item.self, RecordLink.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))

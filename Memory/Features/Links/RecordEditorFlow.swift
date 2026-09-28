@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-/// A single page owner: navigating to links replaces the editor, not its header.
+/// Owns only record navigation. The editor keeps its draft while its links popup is open.
 struct RecordEditorFlow: View {
     @EnvironmentObject private var account: AccountSyncController
     @Query private var links: [RecordLink]
@@ -14,46 +14,28 @@ struct RecordEditorFlow: View {
     var isNew = false
     let onDismiss: () -> Void
     @State private var path: [Item] = []
-    @State private var showsLinks = false
 
     private var current: Item { path.last ?? item }
     private var linkedCount: Int {
-        let visibleIDs = Set(items.filter { $0.ownerID == account.userID && $0.deletedAt == nil }.map(\.id))
-        return links.filter {
-            $0.ownerID == account.userID && $0.deletedAt == nil
-                && $0.otherID(than: current.id).map(visibleIDs.contains) == true
-        }.count
+        RecordLinkIndex(items: items, links: links, ownerID: account.userID).count(for: current.id)
     }
 
     var body: some View {
-        Group {
-            if showsLinks {
-                RecordLinksView(item: current, onBack: { showsLinks = false }, onOpen: { linked in
-                    // Keep navigation bounded when following a cycle A → B → A.
-                    if linked.id == item.id { path.removeAll() }
-                    else if let index = path.firstIndex(where: { $0.id == linked.id }) {
-                        path = Array(path.prefix(index + 1))
-                    } else { path.append(linked) }
-                    showsLinks = false
-                })
-            } else {
-                ItemEditorView(
-                    item: current,
-                    onSave: { title, details, kind, date, end, offsets in
-                        onSave(current, title, details, kind, date, end, offsets)
-                    },
-                    onToggleCompleted: { onToggleCompleted(current) },
-                    onDelete: { onDelete(current) },
-                    isEmbedded: true,
-                    isCompactDesktopPane: isCompactDesktopPane,
-                    isNew: isNew,
-                    linkedCount: linkedCount,
-                    onOpenLinks: isNew ? nil : { showsLinks = true },
-                    onDismiss: backFromEditor
-                )
-                .id(current.id)
-            }
-        }
+        ItemEditorView(
+            item: current,
+            onSave: { title, details, kind, date, end, offsets in
+                onSave(current, title, details, kind, date, end, offsets)
+            },
+            onToggleCompleted: { onToggleCompleted(current) },
+            onDelete: { onDelete(current) },
+            isEmbedded: true,
+            isCompactDesktopPane: isCompactDesktopPane,
+            isNew: isNew,
+            linkedCount: linkedCount,
+            onOpenLinkedRecord: { linked in openLinkedRecord(linked) },
+            onDismiss: backFromEditor
+        )
+        .id(current.id)
         .onChange(of: account.userID) { _, _ in onDismiss() }
         .onChange(of: current.deletedAt) { _, date in
             if date != nil { backFromEditor() }
@@ -65,7 +47,14 @@ struct RecordEditorFlow: View {
         else {
             path.removeLast()
             if current.deletedAt != nil { onDismiss() }
-            else { showsLinks = true }
         }
+    }
+
+    private func openLinkedRecord(_ linked: Item) {
+        // Keep navigation bounded when following a cycle A → B → A.
+        if linked.id == item.id { path.removeAll() }
+        else if let index = path.firstIndex(where: { $0.id == linked.id }) {
+            path = Array(path.prefix(index + 1))
+        } else { path.append(linked) }
     }
 }

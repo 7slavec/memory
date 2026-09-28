@@ -107,6 +107,8 @@ struct QuickCaptureCard: View {
     let priorityItem: Item?
     let isPriorityOverdue: Bool
     let additionalPriorityCount: Int
+    let priorityLinkedCount: Int
+    let onOpenPriorityLinkedRecord: (Item) -> Void
     let autofocus: Bool
     let detailCommitSignal: Int
     let remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)?
@@ -128,6 +130,8 @@ struct QuickCaptureCard: View {
         priorityItem: Item? = nil,
         isPriorityOverdue: Bool = false,
         additionalPriorityCount: Int = 0,
+        priorityLinkedCount: Int = 0,
+        onOpenPriorityLinkedRecord: @escaping (Item) -> Void = { _ in },
         autofocus: Bool = false,
         detailCommitSignal: Int = 0,
         remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)? = nil,
@@ -149,6 +153,8 @@ struct QuickCaptureCard: View {
         self.priorityItem = priorityItem
         self.isPriorityOverdue = isPriorityOverdue
         self.additionalPriorityCount = additionalPriorityCount
+        self.priorityLinkedCount = priorityLinkedCount
+        self.onOpenPriorityLinkedRecord = onOpenPriorityLinkedRecord
         self.autofocus = autofocus
         self.detailCommitSignal = detailCommitSignal
         self.remoteVoiceInterpreter = remoteVoiceInterpreter
@@ -783,7 +789,9 @@ struct QuickCaptureCard: View {
                     item: priorityItem,
                     isOverdue: isPriorityOverdue,
                     onToggle: onTogglePriority,
-                    onEdit: onEditPriority
+                    onEdit: onEditPriority,
+                    linkedCount: priorityLinkedCount,
+                    onOpenLinkedRecord: onOpenPriorityLinkedRecord
                 )
             } else {
                 HStack(spacing: 13) {

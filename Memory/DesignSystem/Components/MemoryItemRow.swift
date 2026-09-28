@@ -6,6 +6,8 @@ struct MemoryItemRow: View {
     let onEdit: () -> Void
     var onDelete: (() -> Void)? = nil
     var showsContextMenu = true
+    var linkedCount = 0
+    var onOpenLinks: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 14) {
@@ -42,6 +44,14 @@ struct MemoryItemRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            if linkedCount > 0 {
+                Button(action: onOpenLinks ?? onEdit) {
+                    MemoryLinkBadge(count: linkedCount)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("recordLinksBadge")
+            }
         }
         .padding(.horizontal, 17)
         .padding(.vertical, 15)

@@ -5,6 +5,9 @@ struct HomePriorityCard: View {
     let isOverdue: Bool
     let onToggle: () -> Void
     let onEdit: () -> Void
+    var linkedCount = 0
+    var onOpenLinkedRecord: ((Item) -> Void)? = nil
+    @State private var showsLinks = false
 
     var body: some View {
         HStack(spacing: 14) {
@@ -49,9 +52,21 @@ struct HomePriorityCard: View {
             }
             .buttonStyle(.plain)
 
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.tertiary)
+            if linkedCount > 0 {
+                Button { showsLinks = true } label: {
+                    MemoryLinkBadge(count: linkedCount)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .recordLinksPopup(item: item, isPresented: $showsLinks) { linked in
+                    showsLinks = false
+                    onOpenLinkedRecord?(linked)
+                }
+            } else {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.horizontal, 17)
         .padding(.vertical, 16)

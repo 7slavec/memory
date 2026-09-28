@@ -40,6 +40,16 @@ enum RecordLinkError: LocalizedError {
 
 @MainActor
 enum RecordLinkService {
+    static func unlinkAll(for item: Item, ownerID: String?, context: ModelContext) throws {
+        guard item.ownerID == ownerID, item.deletedAt == nil, item.modelContext === context else {
+            throw RecordLinkError.unavailable
+        }
+        do {
+            try markDeleted(for: item, context: context)
+            try context.save()
+        } catch { context.rollback(); throw error }
+    }
+
     static func setLinked(_ enabled: Bool, first: Item, second: Item, ownerID: String?, context: ModelContext) throws {
         guard first.id != second.id, first.ownerID == ownerID, second.ownerID == ownerID,
               first.deletedAt == nil, second.deletedAt == nil,
