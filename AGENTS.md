@@ -18,6 +18,8 @@
 
 ## Completion evidence
 
+- User preference (28 September 2026): keep verification proportional and quiet. Reuse passing results when relevant code has not changed. Do not run the full UI suite or repeat click-through scenarios after every edit; use one focused check for the changed behavior and builds for affected platforms. A full regression run requires a concrete cross-cutting change or explicit user request. Never create/delete the user's real records just to test; preserve existing record formats.
+
 - Use `scripts/verify-local.sh` for Mac unit tests + iOS compile; optional `--ui` adds the isolated Mac multi-record UI scenario. See SYSTEM.md for limits.
 - A build is not a visual or device check. Report build, test, installation, launch, and manual verification separately.
 - Run `git diff --check`. Review staged paths and secrets before committing/pushing. Never include `SupabaseConfig.plist`, `.env`, local stores, Voice Lab user samples, signing material, or `supabase/.temp`.
