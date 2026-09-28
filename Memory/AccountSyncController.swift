@@ -489,6 +489,7 @@ private struct RemoteVoiceInterpretationRequest: Encodable {
 
 struct RemoteVoiceCaptureResponse: Decodable {
     let entries: [RemoteVoiceInterpretation]?
+    let linkGroups: VoiceLinkGroups?
     let title: String?
     let details: String?
     let dueDate: String?
@@ -523,7 +524,8 @@ struct RemoteVoiceCaptureResponse: Decodable {
             throw VoiceSemanticError.emptyResult
         }
         let plainDateFormatter = ISO8601DateFormatter()
-        let captured = try sourceEntries.map { entry -> VoiceCaptureEntry in
+        let membership = linkGroups?.membership(entryCount: sourceEntries.count, transcript: transcript) ?? [:]
+        let captured = try sourceEntries.enumerated().map { index, entry -> VoiceCaptureEntry in
             let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty else { throw VoiceSemanticError.emptyResult }
             let dueDate = entry.dueDate.flatMap {
@@ -552,7 +554,8 @@ struct RemoteVoiceCaptureResponse: Decodable {
                     ambiguities: Set(entry.ambiguities)
                 ),
                 kind: kind,
-                endDate: kind == .event ? endDate : nil
+                endDate: kind == .event ? endDate : nil,
+                linkGroup: membership[index]
             )
         }
         return VoiceCaptureResult(entries: captured)

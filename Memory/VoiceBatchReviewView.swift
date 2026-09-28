@@ -1,16 +1,34 @@
 import SwiftUI
 import Combine
+import SwiftData
 
 struct VoiceBatchReviewView<Header: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @EnvironmentObject private var account: AccountSyncController
+    @Query private var storedItems: [Item]
+    @Query private var links: [RecordLink]
     @ObservedObject var session: VoiceBatchReviewSession
     let onCancel: () -> Void
     let onSave: () -> Bool
+    let onSaveExisting: (Item, String, String?, EntryKind, Date?, Date?, [Int]) -> Bool
+    let onToggleExisting: (Item) -> Bool
+    let onDeleteExisting: (Item) -> Bool
     @ViewBuilder let header: () -> Header
 
     var body: some View {
+        let index = RecordLinkIndex(items: storedItems, links: links, ownerID: account.userID)
         Group {
-            if let selectedEntryID = session.selectedEntryID,
+            if let externalItem = session.externalItem {
+                RecordEditorFlow(item: externalItem, onSave: onSaveExisting,
+                                 onToggleCompleted: onToggleExisting, onDelete: onDeleteExisting,
+                                 onOpenIntercept: { item in
+                                     guard session.entries.contains(where: { $0.persistedItemID == item.id }) else { return false }
+                                     session.externalItem = nil
+                                     openLinkedRecord(item)
+                                     return true
+                                 },
+                                 onDismiss: { session.externalItem = nil })
+            } else if let selectedEntryID = session.selectedEntryID,
                let entry = session.entries.first(where: { $0.id == selectedEntryID }) {
                 ItemEditorView(
                     item: session.item(for: entry),
@@ -31,6 +49,9 @@ struct VoiceBatchReviewView<Header: View>: View {
                     isEmbedded: true,
                     isNew: true,
                     saveActionTitle: "Применить",
+                    linkedCount: entry.persistedItemID.map { index.count(for: $0) } ?? 0,
+                    linksItem: storedItem(for: entry),
+                    onOpenLinkedRecord: openLinkedRecord,
                     onDismiss: { selectEntry(nil) }
                 )
                 .id(selectedEntryID)
@@ -46,12 +67,14 @@ struct VoiceBatchReviewView<Header: View>: View {
 
                             LazyVStack(spacing: 10) {
                                 ForEach(session.entries) { entry in
-                                    MemoryItemRow(
-                                        item: session.item(for: entry),
+                                    VoiceReviewRow(
+                                        draft: session.item(for: entry),
+                                        stored: storedItem(for: entry),
+                                        linkedCount: entry.persistedItemID.map { index.count(for: $0) } ?? 0,
                                         onEdit: { selectEntry(entry.id) },
-                                        onDelete: session.entries.count > 1 ? { session.remove(entry.id) } : nil
+                                        onDelete: session.entries.count > 1 ? { session.remove(entry.id) } : nil,
+                                        onOpenLinked: openLinkedRecord
                                     )
-                                    .accessibilityIdentifier("voiceReviewEntry-\(entry.id)")
                                 }
                             }
 
@@ -118,6 +141,38 @@ struct VoiceBatchReviewView<Header: View>: View {
     private func selectEntry(_ entryID: UUID?) {
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
             session.selectedEntryID = entryID
+        }
+    }
+
+    private func storedItem(for entry: VoiceReviewEntry) -> Item? {
+        storedItems.first { $0.id == entry.persistedItemID && $0.ownerID == account.userID && $0.deletedAt == nil }
+    }
+
+    private func openLinkedRecord(_ item: Item) {
+        if let entry = session.entries.first(where: { $0.persistedItemID == item.id }) {
+            selectEntry(entry.id)
+        } else {
+            session.externalItem = item
+        }
+    }
+}
+
+private struct VoiceReviewRow: View {
+    let draft: Item
+    let stored: Item?
+    let linkedCount: Int
+    let onEdit: () -> Void
+    let onDelete: (() -> Void)?
+    let onOpenLinked: (Item) -> Void
+    @State private var showsLinks = false
+
+    var body: some View {
+        if let stored {
+            MemoryItemRow(item: draft, onEdit: onEdit, onDelete: onDelete,
+                          linkedCount: linkedCount, onOpenLinks: { showsLinks = true })
+                .recordLinksPopup(item: stored, isPresented: $showsLinks, onOpen: onOpenLinked)
+        } else {
+            MemoryItemRow(item: draft, onEdit: onEdit, onDelete: onDelete)
         }
     }
 }

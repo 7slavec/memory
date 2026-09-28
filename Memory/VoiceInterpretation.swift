@@ -84,6 +84,7 @@ struct VoiceCaptureEntry: Equatable, Sendable {
     let draft: ReminderDraft
     let kind: EntryKind
     let endDate: Date?
+    var linkGroup: Int? = nil
 }
 
 struct VoiceCaptureResult: Equatable, Sendable {

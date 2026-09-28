@@ -1,3 +1,5 @@
+import { validateLinkGroups, type LinkGroup } from "./link-groups.ts"
+
 type VoiceRequest = {
   transcript: string
   referenceDate: string
@@ -136,7 +138,7 @@ Deno.serve(async (request) => {
         // phase and noticeably shortens the wait after recording.
         thinking: { type: "disabled" },
         reasoning_effort: "none",
-        max_tokens: 1_200,
+        max_tokens: 1_600,
         stream: false,
       }),
       signal: AbortSignal.timeout(8_000),
@@ -188,7 +190,8 @@ const systemPrompt = `
     "reminderOffsets": [минуты до срока],
     "confidence": "low|medium|high",
     "ambiguities": ["missingDate"|"ambiguousDate"|"ambiguousTime"|"unclearReference"|"emptyTitle"]
-  }]
+  }],
+  "linkGroups": [{"members": [0, 1], "confidence": "high", "evidence": "дословный фрагмент речи, явно связывающий обе записи"}]
 }
 
 Правила:
@@ -209,6 +212,8 @@ const systemPrompt = `
 15. ambiguities описывает только реальную неоднозначность: ambiguousDate — неясен день, ambiguousTime — день понятен, но неясно время, unclearReference — неясен объект действия.
 16. sourceText для каждой записи — конкретные слова пользователя об этой записи. Не добавляй в него текст из другой записи.
 17. personalExamples — подтверждённые примеры стиля одной записи, не образцы числа записей. Не копируй их факты и абсолютные даты; пересчитывай срок от текущего referenceDate.
+18. linkGroups — необязательные общие группы ТОЛЬКО новых entries, members — индексы с нуля. Связывай 2–6 самостоятельных записей лишь при явной общей цели или прямой просьбе связать. Например, событие «вебинар» и задача «отправить заявку, чтобы попасть на этот вебинар» образуют группу. Одна запись может быть только в одной группе. evidence — точная цитата из transcript, объясняющая связь, confidence всегда high. При сомнении верни linkGroups=[].
+19. Само по себе перечисление, одинаковая дата, тема, человек, слова «потом» или «после этого» НЕ означают связь. «Завтра купить молоко и оплатить интернет» — отдельные записи без группы. «Зайти в магазин и купить молоко» остаётся ОДНОЙ записью, не разбивай её ради связи. Не придумывай дополнительные записи, сроки, зависимость выполнения или автоматический перенос дат ради группировки. Если есть несколько независимых групп, верни их раздельно.
 
 Примеры. Во всех примерах referenceDate=2026-09-21T12:00:00+04:00, timeZone=Europe/Samara.
 
@@ -234,15 +239,22 @@ JSON:
 
 Вход: «Завтра в девять оплатить интернет и в пятницу в семь вечера вебинар по дизайну»
 JSON:
-{"entries":[{"sourceText":"Завтра в девять оплатить интернет","kind":"reminder","title":"Оплатить интернет","details":null,"dueDate":"2026-09-22T09:00:00+04:00","endDate":null,"reminderOffsets":[],"confidence":"high","ambiguities":[]},{"sourceText":"в пятницу в семь вечера вебинар по дизайну","kind":"event","title":"Вебинар по дизайну","details":null,"dueDate":"2026-09-25T19:00:00+04:00","endDate":null,"reminderOffsets":[],"confidence":"high","ambiguities":[]}]}
+{"entries":[{"sourceText":"Завтра в девять оплатить интернет","kind":"reminder","title":"Оплатить интернет","details":null,"dueDate":"2026-09-22T09:00:00+04:00","endDate":null,"reminderOffsets":[],"confidence":"high","ambiguities":[]},{"sourceText":"в пятницу в семь вечера вебинар по дизайну","kind":"event","title":"Вебинар по дизайну","details":null,"dueDate":"2026-09-25T19:00:00+04:00","endDate":null,"reminderOffsets":[],"confidence":"high","ambiguities":[]}],"linkGroups":[]}
+
+Вход: «В пятницу в семь вечера вебинар по дизайну. Завтра до обеда отправить заявку, чтобы попасть на этот вебинар»
+JSON:
+{"entries":[{"sourceText":"В пятницу в семь вечера вебинар по дизайну","kind":"event","title":"Вебинар по дизайну","details":null,"dueDate":"2026-09-25T19:00:00+04:00","endDate":null,"reminderOffsets":[],"confidence":"high","ambiguities":[]},{"sourceText":"Завтра до обеда отправить заявку, чтобы попасть на этот вебинар","kind":"reminder","title":"Отправить заявку на вебинар","details":null,"dueDate":"2026-09-22T13:00:00+04:00","endDate":null,"reminderOffsets":[],"confidence":"high","ambiguities":[]}],"linkGroups":[{"members":[0,1],"confidence":"high","evidence":"отправить заявку, чтобы попасть на этот вебинар"}]}
 `
 
-function validateResult(value: unknown, transcript: string): { entries: VoiceResult[] } {
+function validateResult(value: unknown, transcript: string): { entries: VoiceResult[]; linkGroups: LinkGroup[] } {
   if (!isRecord(value) || !Array.isArray(value.entries) ||
     value.entries.length < 1 || value.entries.length > 6) {
     throw new Error("invalid_entries")
   }
-  return { entries: value.entries.map((entry) => validateEntry(entry, transcript)) }
+  return {
+    entries: value.entries.map((entry) => validateEntry(entry, transcript)),
+    linkGroups: validateLinkGroups(value.linkGroups, value.entries.length, transcript),
+  }
 }
 
 function validateEntry(value: unknown, transcript: string): VoiceResult {

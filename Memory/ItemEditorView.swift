@@ -18,6 +18,7 @@ struct ItemEditorView: View {
     let onDelete: () -> Bool
     let onOpenLinkedRecord: ((Item) -> Void)?
     let linkedCount: Int
+    let linksItem: Item?
     let isEmbedded: Bool
     let isCompactDesktopPane: Bool
     let onDismiss: () -> Void
@@ -58,6 +59,7 @@ struct ItemEditorView: View {
         isNew: Bool = false,
         saveActionTitle: String? = nil,
         linkedCount: Int = 0,
+        linksItem: Item? = nil,
         onOpenLinkedRecord: ((Item) -> Void)? = nil,
         onDismiss: @escaping () -> Void = {}
     ) {
@@ -71,6 +73,7 @@ struct ItemEditorView: View {
         self.saveActionTitle = saveActionTitle
         self.onDismiss = onDismiss
         self.linkedCount = linkedCount
+        self.linksItem = linksItem
         self.onOpenLinkedRecord = onOpenLinkedRecord
         _title = State(initialValue: item.title)
         _details = State(initialValue: item.details ?? "")
@@ -1271,14 +1274,14 @@ struct ItemEditorView: View {
     private var entryChips: some View {
         HStack(spacing: 8) {
             entryKindToggle
-            if onOpenLinkedRecord != nil, !isNew {
+            if onOpenLinkedRecord != nil, !isNew || linksItem != nil {
                 Button { showsLinks = true } label: {
                     MemoryLinkBadge(count: linkedCount)
                         .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("openRecordLinks")
-                .recordLinksPopup(item: item, isPresented: $showsLinks) { linked in
+                .recordLinksPopup(item: linksItem ?? item, isPresented: $showsLinks) { linked in
                     pendingLinkedRecord = linked
                     showsLinks = false
                     if hasUnsavedChanges { isLinksConfirmationPresented = true }

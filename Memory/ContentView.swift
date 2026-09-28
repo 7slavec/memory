@@ -235,7 +235,7 @@ struct ContentView: View {
                     try? modelContext.save()
                     editingItem = first
                 } else {
-                    voiceReviewSession = VoiceReviewTesting.session()
+                    voiceReviewSession = VoiceReviewTesting.session(context: modelContext)
                 }
                 return
             }
@@ -2466,6 +2466,9 @@ struct ContentView: View {
             session: session,
             onCancel: { cancelVoiceReview(session.batch) },
             onSave: { finishVoiceReview(session) },
+            onSaveExisting: update,
+            onToggleExisting: toggleCompleted,
+            onDeleteExisting: delete,
             header: {
 #if os(iOS)
                 mobilePrimaryHeader
@@ -2495,7 +2498,7 @@ struct ContentView: View {
             action()
             return
         }
-        if session.hasChanges || session.selectedEntryID != nil || !session.batch.isPersisted {
+        if session.hasChanges || session.selectedEntryID != nil || session.externalItem != nil || !session.batch.isPersisted {
             pendingReviewNavigation = action
             isReviewExitConfirmationPresented = true
         } else {
@@ -2594,21 +2597,13 @@ struct ContentView: View {
                   && ($0.endDate == nil || ($0.dueDate != nil && $0.endDate! >= $0.dueDate!)) }) else {
             return nil
         }
-        let newItems = entries.map { entry in
-            Item(
-                title: entry.title.trimmingCharacters(in: .whitespacesAndNewlines),
-                details: entry.details,
-                dueDate: entry.dueDate,
-                entryKind: entry.kind,
-                endDate: entry.kind == .event ? entry.endDate : nil,
-                reminderOffsets: entry.dueDate == nil ? [] : entry.reminderOffsets,
-                ownerID: account.userID
-            )
+        let newItems: [Item]
+        do {
+            newItems = try VoiceBatchPersistence.create(entries, ownerID: account.userID, context: modelContext)
+        } catch {
+            errorMessage = "Не удалось сохранить: \(error.localizedDescription)"
+            return nil
         }
-        withAnimation(.snappy) {
-            newItems.forEach(modelContext.insert)
-        }
-        guard saveChanges() else { return nil }
         newItems.forEach(scheduleReminder)
         account.markLocalChange(modelContext: modelContext)
 #if os(macOS)
@@ -2639,11 +2634,15 @@ struct ContentView: View {
             entry.persistedItemID.map { ($0, entry) }
         })
         let removedIDs = original.compactMap(\.persistedItemID).filter { edited[$0] == nil }
+        do {
+            try VoiceBatchPersistence.stageDeletion(removedIDs.compactMap { stored[$0] }, context: modelContext)
+        } catch {
+            VoiceBatchPersistence.rollback(modelContext)
+            errorMessage = "Не удалось изменить записи: \(error.localizedDescription)"
+            return false
+        }
         for (id, item) in stored {
-            guard let entry = edited[id] else {
-                item.markDeleted()
-                continue
-            }
+            guard let entry = edited[id] else { continue }
             item.title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
             item.details = Item.normalizedDetails(entry.details)
             item.entryKind = entry.kind
@@ -2664,7 +2663,13 @@ struct ContentView: View {
             errorMessage = "Не удалось найти записи для отмены."
             return false
         }
-        stored.values.forEach { $0.markDeleted() }
+        do {
+            try VoiceBatchPersistence.stageDeletion(Array(stored.values), context: modelContext)
+        } catch {
+            VoiceBatchPersistence.rollback(modelContext)
+            errorMessage = "Не удалось отменить записи: \(error.localizedDescription)"
+            return false
+        }
         guard saveChanges() else { return false }
         let ids = Array(stored.keys)
         for id in ids {
@@ -2681,7 +2686,7 @@ struct ContentView: View {
               let stored = try? modelContext.fetch(FetchDescriptor<Item>()) else {
             return nil
         }
-        let matching = stored.filter { ids.contains($0.id) && $0.deletedAt == nil }
+        let matching = stored.filter { ids.contains($0.id) && $0.deletedAt == nil && $0.ownerID == account.userID }
         guard matching.count == ids.count else { return nil }
         return Dictionary(uniqueKeysWithValues: matching.map { ($0.id, $0) })
     }
@@ -2832,6 +2837,7 @@ struct ContentView: View {
             try modelContext.save()
             return true
         } catch {
+            modelContext.processPendingChanges()
             modelContext.rollback()
             errorMessage = "Не удалось сохранить: \(error.localizedDescription)"
             return false

@@ -1203,7 +1203,8 @@ struct QuickCaptureCard: View {
                     sourceText: entry.sourceText,
                     draft: draft,
                     kind: entry.kind,
-                    endDate: entry.endDate
+                    endDate: entry.endDate,
+                    linkGroup: entry.linkGroup
                 )
             }
             resetVoiceComposer()

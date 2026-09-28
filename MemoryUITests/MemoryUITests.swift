@@ -6,8 +6,55 @@
 //
 
 import XCTest
+#if os(macOS)
+import AppKit
+#endif
 
 final class MemoryUITests: XCTestCase {
+
+#if os(macOS)
+    @MainActor private func pasteTestTitle(_ text: String, into field: XCUIElement) {
+        let board = NSPasteboard.general
+        var saved: [NSPasteboardItem] = []
+        for item in board.pasteboardItems ?? [] {
+            let restored = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) { restored.setData(data, forType: type) }
+            }
+            saved.append(restored)
+        }
+        defer {
+            board.clearContents()
+            _ = board.writeObjects(saved)
+        }
+        board.clearContents()
+        board.setString(text, forType: .string)
+        field.typeKey("v", modifierFlags: .command)
+    }
+#endif
+
+    @MainActor func testVoiceReviewAppliesEditedTitle() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-voice-review"]
+        app.launch()
+        ensureWindow(app)
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Сходить за покупками")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let title = app.textFields["recordEditorTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        title.tap()
+#if os(macOS)
+        title.typeKey("a", modifierFlags: .command)
+        pasteTestTitle("Updated capture", into: title)
+#else
+        title.typeText(" Updated capture")
+#endif
+        XCTAssertTrue((title.value as? String)?.contains("Updated capture") == true)
+        app.buttons["Применить"].tap()
+        XCTAssertTrue(app.staticTexts["2 записи"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Updated capture")).firstMatch.exists)
+    }
 
     @MainActor func testManualLinksUseOneEditorAndUnlinkKeepsRecords() throws {
         let app = XCUIApplication()
@@ -134,6 +181,20 @@ final class MemoryUITests: XCTestCase {
         listScreenshot.lifetime = .keepAlways
         add(listScreenshot)
 
+        let links = app.buttons["Связанные записи: 2"].firstMatch
+        XCTAssertTrue(links.exists)
+        links.tap()
+        XCTAssertTrue(app.buttons["Закрыть связи"].waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Сходить за покупками")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["openRecordLinks"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "Назад").count, 1)
+        app.buttons["openRecordLinks"].tap()
+        app.buttons["Разорвать связь"].tap()
+        XCTAssertFalse(app.buttons["Закрыть связи"].waitForExistence(timeout: 1))
+        app.buttons["Назад"].tap()
+        XCTAssertTrue(app.staticTexts["2 записи"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Связанные записи: 2"].exists)
+
         let first = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Собрание")).firstMatch
         XCTAssertTrue(first.exists)
         first.tap()
@@ -152,9 +213,9 @@ final class MemoryUITests: XCTestCase {
         title.tap()
 #if os(macOS)
         title.typeKey("a", modifierFlags: .command)
-        title.typeText("Купить продукты для поездки")
+        pasteTestTitle("Updated capture", into: title)
 #else
-        title.typeText(" — Купить продукты для поездки")
+        title.typeText(" Updated capture")
 #endif
         let editorScreenshot = XCTAttachment(screenshot: app.screenshot())
         editorScreenshot.name = "Single record editor"
@@ -162,7 +223,7 @@ final class MemoryUITests: XCTestCase {
         add(editorScreenshot)
         app.buttons["Применить"].tap()
         XCTAssertTrue(app.staticTexts["2 записи"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Купить продукты для поездки")).firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Updated capture")).firstMatch.exists)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Собрание")).firstMatch.exists)
         XCTAssertTrue(app.buttons["Сохранить"].exists)
         app.buttons["Сохранить"].tap()

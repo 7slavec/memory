@@ -12,6 +12,7 @@ struct VoiceReviewEntry: Identifiable, Equatable {
     var endDate: Date?
     var reminderOffsets: [Int]
     var persistedItemID: UUID?
+    let linkGroup: Int?
 
     init(_ entry: VoiceCaptureEntry, defaultReminderMinutes: Int = 0) {
         id = UUID()
@@ -28,6 +29,7 @@ struct VoiceReviewEntry: Identifiable, Equatable {
                 ? [defaultReminderMinutes]
                 : entry.draft.reminderOffsets)
         persistedItemID = nil
+        linkGroup = entry.linkGroup
     }
 
     mutating func applyEditorChanges(
@@ -78,6 +80,7 @@ final class VoiceBatchReviewSession: ObservableObject, Identifiable {
     let batch: VoiceBatchReview
     @Published var entries: [VoiceReviewEntry]
     @Published var selectedEntryID: UUID?
+    @Published var externalItem: Item?
 
     var id: UUID { batch.id }
     var hasChanges: Bool { entries != batch.entries }

@@ -17,7 +17,7 @@
 | Архив | профиль на iPhone / боковая панель Mac → выполненные и прошедшие события → запись | `ContentView`: `mobileArchiveContent`, `desktopArchiveContent`, `completedItems` |
 | Редактор | заголовок, описание, тип, расписание, уведомления, действия → сохранить / назад | `ItemEditorView.swift` |
 | Ручные связи | существующая запись → связанные записи → выбрать / открыть / снять связь | `Features/Links`, `Domain/Links`; контракт — `docs/MANUAL-LINKS.md` |
-| Voice Lab | параметры разбора → примеры → исправления / проверки | `VoiceLabView.swift`, `VoiceLabStore.swift` |
+| Voice Lab | статистика локальных проверок → настройки; примеры и ручной ввод скрыты | `VoiceLabView.swift`, `VoiceLabStore.swift`, `Domain/Interpretation/VoiceLabStatistics.swift` |
 
 Пути без префикса в таблице относятся к `Memory/`.
 

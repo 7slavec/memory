@@ -12,6 +12,7 @@ struct RecordEditorFlow: View {
     let onDelete: (Item) -> Bool
     var isCompactDesktopPane = false
     var isNew = false
+    var onOpenIntercept: ((Item) -> Bool)? = nil
     let onDismiss: () -> Void
     @State private var path: [Item] = []
 
@@ -51,6 +52,7 @@ struct RecordEditorFlow: View {
     }
 
     private func openLinkedRecord(_ linked: Item) {
+        if onOpenIntercept?(linked) == true { return }
         // Keep navigation bounded when following a cycle A → B → A.
         if linked.id == item.id { path.removeAll() }
         else if let index = path.firstIndex(where: { $0.id == linked.id }) {
