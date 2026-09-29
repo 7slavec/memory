@@ -246,9 +246,11 @@ struct ContentView: View {
 #endif
             await synchronize()
         }
-        .task {
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                do { try await Task.sleep(for: .seconds(30)) }
+                catch { return }
                 currentDate = .now
             }
         }
@@ -967,6 +969,7 @@ struct ContentView: View {
                                 isDocked: true,
                                 isHome: true,
                                 isRecordsPage: selectedSection == .all,
+                                isPageSwiping: suppressItemOpening,
                                 externalKeyboardVisible: isKeyboardVisible,
                                 priorityItem: homePriorityItem,
                                 isPriorityOverdue: homePriorityIsOverdue,
@@ -1016,12 +1019,15 @@ struct ContentView: View {
                         }
                         .offset(x: isMobileProfilePresented ? -proxy.size.width : 0)
                         .allowsHitTesting(!isMobileProfilePresented)
+                        .accessibilityHidden(isMobileProfilePresented)
 
                         mobileProfileDestinationContent
                             .offset(x: isMobileProfilePresented ? 0 : proxy.size.width)
                             .allowsHitTesting(isMobileProfilePresented)
+                            .accessibilityHidden(!isMobileProfilePresented)
                     }
                     .clipped()
+                    .contentShape(Rectangle())
                     .simultaneousGesture(responsiveMobilePageSwipeGesture)
                 }
             }
@@ -1768,11 +1774,11 @@ struct ContentView: View {
 
                 if abs(horizontal) > 26,
                    abs(horizontal) > abs(vertical) * 1.2,
-                   abs(predicted) > 52 {
+                   (abs(horizontal) > 44 || abs(predicted) > 52) {
                     suppressItemOpening = true
-                    if selectedSection == .now, predicted > 0 {
+                    if selectedSection == .now, horizontal > 0 {
                         navigateMobile(to: .all)
-                    } else if selectedSection == .all, predicted < 0 {
+                    } else if selectedSection == .all, horizontal < 0 {
                         navigateMobile(to: .now)
                     }
                 }
@@ -2176,7 +2182,9 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var activeItemsListContent: some View {
-        if searchedDatedActiveItems.isEmpty {
+        let groups = groupedActiveItems
+        let linkIndex = RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID)
+        if groups.isEmpty {
             RecordsEmptyView(
                 icon: searchTextIsEmpty ? "sparkles" : "magnifyingglass",
                 title: searchTextIsEmpty ? "Нет записей с датой" : "Ничего не нашлось",
@@ -2186,7 +2194,7 @@ struct ContentView: View {
             )
         } else {
             ForEach(datedItemGroups) { group in
-                let groupItems = groupedActiveItems[group] ?? []
+                let groupItems = groups[group] ?? []
                 if !groupItems.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         MemorySectionHeader(
@@ -2196,7 +2204,7 @@ struct ContentView: View {
                             icon: group.icon,
                             color: group.color
                         )
-                        taskRows(groupItems)
+                        taskRows(groupItems, linkIndex: linkIndex)
                     }
                 }
             }
@@ -2233,8 +2241,8 @@ struct ContentView: View {
         .memoryCard()
     }
 
-    private func taskRows(_ source: [Item]) -> some View {
-        let index = RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID)
+    private func taskRows(_ source: [Item], linkIndex: RecordLinkIndex? = nil) -> some View {
+        let index = linkIndex ?? RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID)
         return LazyVStack(spacing: 12) {
             ForEach(source, id: \.persistentModelID) { item in
                 MemoryItemRow(

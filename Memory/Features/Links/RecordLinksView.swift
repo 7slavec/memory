@@ -23,12 +23,10 @@ struct RecordLinksView: View {
     private var groupIDs: Set<UUID> {
         RecordLinkIndex(items: items, links: links, ownerID: account.userID).memberIDs(for: anchorID)
     }
-    private var isChoosing: Bool { isAdding || groupIDs.count <= 1 }
     private var visibleItems: [Item] {
         items.filter { $0.ownerID == account.userID && $0.deletedAt == nil }
     }
-    private var displayedItems: [Item] {
-        let ids = groupIDs
+    private func displayedItems(in ids: Set<UUID>, choosing isChoosing: Bool) -> [Item] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return visibleItems.filter {
             (isChoosing ? !ids.contains($0.id) && RecordLinkIndex.canAdd($0) : ids.contains($0.id))
@@ -43,13 +41,25 @@ struct RecordLinksView: View {
     }
 
     var body: some View {
+        let ids = groupIDs
+        let isChoosing = isAdding || ids.count <= 1
+        let displayedItems = displayedItems(in: ids, choosing: isChoosing)
         VStack(spacing: 0) {
+            if isChoosing {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Поиск", text: $search)
+                        .textFieldStyle(.plain)
+                        .frame(minWidth: 0, maxWidth: .infinity)
+                        .accessibilityIdentifier("linkSearch")
+                }
+                .font(.system(size: 15))
+                .padding(.horizontal, 12).frame(minHeight: 44)
+                .background(MemoryTheme.raised, in: Capsule())
+                .padding(14).padding(.bottom, -6)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if isChoosing {
-                        MemorySearchField(text: $search)
-                            .accessibilityIdentifier("linkSearch")
-                    }
                     if let syncError = account.linkSyncError {
                         Button {
                             account.markLocalChange(modelContext: modelContext)
@@ -66,7 +76,7 @@ struct RecordLinksView: View {
                     }
                     LazyVStack(spacing: 8) {
                         ForEach(displayedItems) { other in
-                            HStack(spacing: 8) {
+                            ZStack(alignment: .topTrailing) {
                                 Button {
                                     if isChoosing { add(other) }
                                     else {
@@ -81,6 +91,7 @@ struct RecordLinksView: View {
                                         }
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.trailing, !isChoosing && ids.count > 1 ? 30 : 0)
                                     .padding(14).background(MemoryTheme.raised, in: RoundedRectangle(cornerRadius: 16))
                                 }
                                 .buttonStyle(.plain)
@@ -92,11 +103,11 @@ struct RecordLinksView: View {
                                     }
                                 }
                                 .accessibilityHint(isChoosing ? "Связать с текущей записью" : other.id == item.id ? "Текущая запись" : "Открыть запись")
-                                if !isChoosing && groupIDs.count > 1 {
+                                if !isChoosing && ids.count > 1 {
                                     Button { remove(other) } label: {
                                         Image(systemName: "xmark")
-                                            .font(.system(size: 14, weight: .semibold))
-                                            .frame(width: 32, height: 32)
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .frame(width: 24, height: 24)
                                             .background(.primary.opacity(0.06), in: Circle())
                                             .frame(width: 44, height: 44)
                                             .contentShape(Rectangle())
@@ -113,8 +124,10 @@ struct RecordLinksView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            HStack(spacing: 8) { linkActions }
-            .padding(.horizontal, 14).padding(.bottom, 14)
+            if !isChoosing {
+                HStack(spacing: 8) { linkActions }
+                    .padding(.horizontal, 14).padding(.bottom, 14)
+            }
 
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -124,29 +137,25 @@ struct RecordLinksView: View {
         )) { Button("ОК", role: .cancel) {} } message: { Text(errorMessage ?? "") }
         .onChange(of: account.userID) { _, _ in dismiss() }
         // Bounded content on both platforms; long groups scroll.
-        .frame(height: min(480, CGFloat(isChoosing ? 150 : 96) + CGFloat(displayedItems.count) * 80))
+        .frame(height: min(480, 80 + CGFloat(max(1, displayedItems.count)) * 96))
         .accessibilityAction(.escape) { dismiss() }
     }
 
-    @ViewBuilder private var linkActions: some View {
-        if isChoosing {
-            Button {
-                if groupIDs.count > 1 { isAdding = false; search = "" }
-                else { dismiss() }
-            } label: {
-                Image(systemName: "arrow.left").font(.system(size: 16, weight: .medium))
-                    .frame(width: 44, height: 44)
-                    .background(MemoryTheme.raised, in: Circle())
-            }
-            .buttonStyle(.plain).accessibilityLabel("Отменить выбор связи")
-            Spacer(minLength: 0)
-        } else {
-            if groupIDs.count > 1 {
+    private var linkActions: some View {
+        HStack(spacing: 8) {
                 Button(role: .destructive, action: dissolve) {
-                    Text("Разорвать").frame(maxWidth: .infinity)
+                    Image(systemName: "link")
+                        .overlay {
+                            UnlinkSlash().stroke(MemoryTheme.raised, lineWidth: 5)
+                            UnlinkSlash().stroke(MemoryTheme.danger, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                        }
+                        .font(.system(size: 17, weight: .medium))
+                        .frame(width: 44, height: 44)
+                        .background(MemoryTheme.raised, in: Circle())
                 }
-                    .buttonStyle(MemoryActionStyle())
-            }
+                .buttonStyle(.plain)
+                .foregroundStyle(MemoryTheme.danger)
+                .accessibilityLabel("Разорвать")
             Button { isAdding = true } label: {
                 Label("Добавить", systemImage: "plus").frame(maxWidth: .infinity)
             }
@@ -166,7 +175,7 @@ struct RecordLinksView: View {
 
     private func remove(_ other: Item) {
         guard let anchor = visibleItems.first(where: { $0.id == anchorID }) else { return }
-        let nextAnchor = displayedItems.first { $0.id != other.id }?.id ?? item.id
+        let nextAnchor = displayedItems(in: groupIDs, choosing: false).first { $0.id != other.id }?.id ?? item.id
         do {
             try RecordGroupService.remove(other, from: anchor, ownerID: account.userID, context: modelContext)
             if anchorID == other.id { anchorID = nextAnchor }
@@ -181,5 +190,14 @@ struct RecordLinksView: View {
             account.markLocalChange(modelContext: modelContext)
             dismiss()
         } catch { errorMessage = error.localizedDescription }
+    }
+}
+
+private struct UnlinkSlash: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path {
+            $0.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            $0.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        }
     }
 }

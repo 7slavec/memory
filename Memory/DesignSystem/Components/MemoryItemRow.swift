@@ -18,16 +18,10 @@ struct MemoryItemRow: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 4) {
             Button(action: onEdit) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 18) {
+                    HStack(alignment: .top, spacing: 12) {
                         if let date = item.dueDate { timeColumn(date) }
                         copy
                     }
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let date = item.dueDate { timeColumn(date) }
-                        copy
-                    }
-                }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -35,15 +29,16 @@ struct MemoryItemRow: View {
             .accessibilityLabel("\(item.title), \(item.entryKind.title)\(item.dueDate.map { ", " + MemoryDateFormatting.shortDateTime($0) } ?? "")")
             if linkedCount > 0 {
                 Button(action: onOpenLinks ?? onEdit) {
-                    MemoryLinkCircle(count: linkedCount)
+                    MemoryLinkCircle(count: linkedCount, onColor: item.isEvent)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("recordLinksBadge")
             }
         }
         .padding(18)
-        .foregroundStyle(MemoryTheme.accent)
-        .background(hovered ? MemoryTheme.raised : MemoryTheme.card,
+        .foregroundStyle(item.isEvent ? MemoryTheme.onEventCard : MemoryTheme.accent)
+        .background(item.isEvent ? (hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
+                    : (hovered ? MemoryTheme.raised : MemoryTheme.card),
                     in: RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
         .onHover { hovered = $0 }
         .contextMenu {
@@ -67,7 +62,7 @@ struct MemoryItemRow: View {
                 .font(.system(size: 30, weight: .regular)).tracking(-1.2).monospacedDigit()
             if item.isEvent, let end = item.endDate {
                 HStack(spacing: 5) {
-                    Capsule().fill(.primary.opacity(0.3)).frame(width: 2, height: 16)
+                    Capsule().fill(MemoryTheme.onEventCard.opacity(0.3)).frame(width: 2, height: 16)
                     Text("до \(MemoryDateFormatting.time(end))")
                         .font(.system(size: 13)).monospacedDigit()
                 }
@@ -95,13 +90,14 @@ struct MemoryItemRow: View {
                             .accessibilityHidden(true)
                     }
                     Text(dateLabel(date))
-                        .foregroundStyle(isOverdue ? MemoryTheme.danger : MemoryTheme.secondaryText)
+                        .foregroundStyle(isOverdue ? MemoryTheme.danger
+                            : item.isEvent ? MemoryTheme.onEventCard.opacity(0.75) : MemoryTheme.secondaryText)
                 }
                     .font(.system(size: 12, weight: .medium))
                     .padding(.top, 4).multilineTextAlignment(.leading)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 
     private func dateLabel(_ date: Date) -> String {

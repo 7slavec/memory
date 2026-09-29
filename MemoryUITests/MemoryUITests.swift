@@ -12,6 +12,41 @@ import AppKit
 
 final class MemoryUITests: XCTestCase {
 
+#if os(iOS)
+    @MainActor func testMobilePickerSwitchAndOrbSwipe() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-links"]
+        app.launch()
+        let title = app.textFields["recordEditorTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        app.switches["scheduleEnabled"].tap()
+        let date = app.buttons["Начало, дата"]
+        let time = app.buttons["Начало, время"]
+        for _ in 0..<3 {
+            date.tap()
+            // Tap the other source control while its sibling panel is open.
+            // The first outside tap may dismiss the popover; neither may close the editor.
+            time.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            XCTAssertTrue(title.exists)
+            time.tap()
+            date.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            XCTAssertTrue(title.exists)
+        }
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Mobile schedule switching"; shot.lifetime = .keepAlways; add(shot)
+        app.buttons["Назад"].tap()
+        let orb = app.buttons["homeVoiceOrb"]
+        if !orb.waitForExistence(timeout: 2), app.buttons["Назад"].exists {
+            app.buttons["Назад"].tap()
+        }
+        XCTAssertTrue(orb.waitForExistence(timeout: 5))
+        orb.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: orb.coordinate(withNormalizedOffset: CGVector(dx: 1.1, dy: 0.5)))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Входящие")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.alerts.count, 0, "A swipe must not request microphone access")
+    }
+#endif
+
     @MainActor func testFlowContextPanelsKeepEditor() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-links"]

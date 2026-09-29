@@ -8,10 +8,11 @@ struct GlassVoiceOrb: View {
     let isProcessing: Bool
     let isPulsing: Bool
     let size: CGFloat
+    var isVisible = true
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30,
-                                paused: reduceMotion || scenePhase != .active || !(isListening || isProcessing))) { context in
+                                paused: !isVisible || reduceMotion || scenePhase != .active || !(isListening || isProcessing))) { context in
             VoiceParticleField(
                 listening: isListening ? 1 : 0,
                 processing: isProcessing ? 1 : 0,

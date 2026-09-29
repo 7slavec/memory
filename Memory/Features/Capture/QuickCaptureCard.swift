@@ -95,6 +95,8 @@ struct QuickCaptureCard: View {
     @State private var voiceProcessingStartedAt = Date.now
     @State private var pendingVoiceClarification: PendingVoiceClarification?
     @State private var isRecordsComposerPresented = false
+    @State private var lastOrbDrag = Date.distantPast
+    @GestureState private var isOrbDragging = false
     @Namespace private var homeComposerNamespace
     @Namespace private var captureChromeNamespace
     @FocusState private var focusedField: QuickCaptureFocus?
@@ -103,6 +105,7 @@ struct QuickCaptureCard: View {
     let isDocked: Bool
     let isHome: Bool
     let isRecordsPage: Bool
+    let isPageSwiping: Bool
     let externalKeyboardVisible: Bool
     let priorityItem: Item?
     let isPriorityOverdue: Bool
@@ -126,6 +129,7 @@ struct QuickCaptureCard: View {
         isDocked: Bool = false,
         isHome: Bool = false,
         isRecordsPage: Bool = false,
+        isPageSwiping: Bool = false,
         externalKeyboardVisible: Bool = false,
         priorityItem: Item? = nil,
         isPriorityOverdue: Bool = false,
@@ -149,6 +153,7 @@ struct QuickCaptureCard: View {
         self.isDocked = isDocked
         self.isHome = isHome
         self.isRecordsPage = isRecordsPage
+        self.isPageSwiping = isPageSwiping
         self.externalKeyboardVisible = externalKeyboardVisible
         self.priorityItem = priorityItem
         self.isPriorityOverdue = isPriorityOverdue
@@ -527,12 +532,21 @@ struct QuickCaptureCard: View {
                 isListening: voiceInput.isListening,
                 isProcessing: isFinalizingVoiceSubmission,
                 isPulsing: isVoicePulsing || isFinalizingVoiceSubmission,
-                size: orbSize
+                size: orbSize,
+                isVisible: !isRecordsPage
             )
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .disabled(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 8)
+                .updating($isOrbDragging) { _, dragging, _ in
+                    dragging = true
+                }
+                .onEnded { _ in lastOrbDrag = .now }
+        )
+        .accessibilityIdentifier("homeVoiceOrb")
         .accessibilityLabel(voiceOrbAccessibilityLabel)
     }
 
@@ -841,6 +855,7 @@ struct QuickCaptureCard: View {
     }
 
     private func handleHomeVoiceTap() {
+        guard !isPageSwiping, !isOrbDragging, Date.now.timeIntervalSince(lastOrbDrag) > 0.3 else { return }
         handleVoiceTap()
     }
 

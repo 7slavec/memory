@@ -43,6 +43,8 @@ struct ItemEditorView: View {
     @State private var pendingLinkedRecord: Item?
     @State private var isSaveErrorPresented = false
 #if os(iOS)
+    @State private var isMobileEditorAtTop = true
+    @State private var dismissDragEligible: Bool?
     @FocusState private var mobileFocusedField: MobileEditorField?
 #endif
 
@@ -115,8 +117,6 @@ struct ItemEditorView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 mobileEditorHeader
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(strongDownDismissGesture)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
@@ -142,10 +142,16 @@ struct ItemEditorView: View {
                     .padding(.bottom, 36)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y <= -geometry.contentInsets.top + 2
+                } action: { _, atTop in isMobileEditorAtTop = atTop }
             }
             .background(MemoryTheme.background)
+            .contentShape(Rectangle())
+            .simultaneousGesture(strongDownDismissGesture)
             .toolbar(.hidden, for: .navigationBar)
         }
+        .interactiveDismissDisabled()
         .confirmationDialog(
             "Удалить запись?",
             isPresented: $isDeleteConfirmationPresented,
@@ -295,12 +301,19 @@ struct ItemEditorView: View {
 
     private var strongDownDismissGesture: some Gesture {
         DragGesture(minimumDistance: 32)
+            .onChanged { _ in
+                if dismissDragEligible == nil {
+                    dismissDragEligible = isMobileEditorAtTop && activeSchedulePicker == nil
+                        && !showsLinks && mobileFocusedField == nil
+                }
+            }
             .onEnded { value in
+                defer { dismissDragEligible = nil }
                 let horizontal = value.translation.width
                 let vertical = value.translation.height
                 let predictedVertical = value.predictedEndTranslation.height
 
-                guard activeSchedulePicker == nil, !showsLinks,
+                guard dismissDragEligible == true, activeSchedulePicker == nil, !showsLinks,
                       mobileFocusedField == nil,
                       vertical > 150,
                       predictedVertical > 340,
@@ -500,8 +513,12 @@ struct ItemEditorView: View {
         }
         .padding(.horizontal, 18).padding(.vertical, 10)
         .memoryCard()
-        .animation(reduceMotion ? nil : MemoryTheme.motion, value: hasSchedule)
-        .animation(reduceMotion ? nil : MemoryTheme.motion, value: hasEventEnd)
+        .modifier(MemorySchedulePopover(active: $activeSchedulePicker,
+                                        selection: scheduleBinding(activeSchedulePicker ?? .startDate),
+                                        minimumDate: activeSchedulePicker?.editsEnd == true ? scheduledDate : nil,
+                                        availableWidth: editorWidth))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hasSchedule)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hasEventEnd)
         .onChange(of: scheduledDate) { old, new in
             guard entryKind == .event, hasEventEnd, eventEndDate <= new else { return }
             eventEndDate = new.addingTimeInterval(max(60, eventEndDate.timeIntervalSince(old)))
@@ -545,10 +562,6 @@ struct ItemEditorView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(target.editsEnd ? "Окончание" : "Начало"), \(target.editsDate ? "дата" : "время")")
-        .modifier(MemorySchedulePopover(target: target, active: $activeSchedulePicker,
-                                        selection: scheduleBinding(target),
-                                        minimumDate: target.editsEnd ? scheduledDate : nil,
-                                        availableWidth: editorWidth))
     }
 
     @ViewBuilder private func endControls(_ target: SchedulePickerTarget) -> some View {
@@ -814,6 +827,10 @@ struct ItemEditorView: View {
     }
 
     private func closeEditor() {
+        // A stale dismissal action during a nested panel transition may only
+        // close that panel, never the record and its unsaved draft.
+        if activeSchedulePicker != nil { activeSchedulePicker = nil; return }
+        if showsLinks { showsLinks = false; return }
         if isEmbedded {
             onDismiss()
         } else {

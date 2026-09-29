@@ -23,13 +23,14 @@ struct MemoryLinkBadge: View {
 /// Card accessory: fixed circular silhouette; the count never widens the card.
 struct MemoryLinkCircle: View {
     let count: Int
+    var onColor = false
 
     var body: some View {
         Image(systemName: "link")
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(.primary)
+            .foregroundStyle(onColor ? MemoryTheme.onEventCard : MemoryTheme.accent)
             .frame(width: 32, height: 32)
-            .background(MemoryTheme.accent.opacity(0.14), in: Circle())
+            .background((onColor ? MemoryTheme.onEventCard : MemoryTheme.accent).opacity(0.14), in: Circle())
             .overlay(alignment: .topTrailing) {
                 if count > 1 {
                     Text(count + 1 > 99 ? "99+" : "\(count + 1)")
