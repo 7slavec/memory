@@ -347,7 +347,7 @@ struct AccountView: View {
                     Text(mode.rawValue)
                 }
                 .font(.body.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(MemoryTheme.onAccent)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
                 .background(MemoryTheme.accent.gradient)
@@ -403,7 +403,7 @@ struct AccountView: View {
             }
             .buttonStyle(.plain)
             .font(.body.weight(.semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(MemoryTheme.onAccent)
             .frame(maxWidth: .infinity)
             .frame(height: 50)
             .background(MemoryTheme.accent.gradient)
@@ -648,7 +648,7 @@ struct AccountView: View {
                 } label: {
                     Text("Войти или создать аккаунт")
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(MemoryTheme.onAccent)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(MemoryTheme.accent.gradient)
@@ -665,7 +665,7 @@ struct AccountView: View {
         VStack(spacing: 14) {
             Text(profileInitial)
                 .font(.system(size: 34, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(MemoryTheme.onAccent)
                 .frame(width: 92, height: 92)
                 .background(MemoryTheme.accent.gradient)
                 .clipShape(Circle())
@@ -865,7 +865,7 @@ struct AccountView: View {
         VStack(spacing: 12) {
             Text(profileInitial)
                 .font(.system(size: 30, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(MemoryTheme.onAccent)
                 .frame(width: 82, height: 82)
                 .background(MemoryTheme.accent.gradient)
                 .clipShape(Circle())

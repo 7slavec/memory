@@ -61,7 +61,7 @@ private struct QuickCaptureSurfaceModifier: ViewModifier {
     func body(content: Content) -> some View {
         if isMinimal {
             content
-                .background(Color.primary.opacity(0.035))
+                .background(MemoryTheme.card)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         } else {
             content.memoryCard()
@@ -199,8 +199,6 @@ struct QuickCaptureCard: View {
                isRecordsPage,
                !isRecordsComposerPresented,
                !externalKeyboardVisible,
-               !voiceInput.isListening,
-               !isFinalizingVoiceSubmission,
                pendingVoiceClarification == nil {
                 sharedCaptureChrome
                     .frame(maxWidth: .infinity)
@@ -210,8 +208,6 @@ struct QuickCaptureCard: View {
         .safeAreaInset(edge: .bottom, spacing: 18) {
             if isHome,
                (!isRecordsPage || isRecordsComposerPresented),
-               !voiceInput.isListening,
-               !isFinalizingVoiceSubmission,
                pendingVoiceClarification == nil {
                 sharedCaptureChrome
                     .frame(maxWidth: .infinity)
@@ -222,8 +218,8 @@ struct QuickCaptureCard: View {
                 }
         }
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)
-        .animation(.spring(response: 0.52, dampingFraction: 0.88), value: voiceInput.isListening)
-        .animation(.easeInOut(duration: 0.28), value: isFinalizingVoiceSubmission)
+        .animation(reduceMotion ? nil : MemoryTheme.motion, value: voiceInput.isListening)
+        .animation(reduceMotion ? nil : MemoryTheme.motion, value: isFinalizingVoiceSubmission)
         .animation(.spring(response: 0.42, dampingFraction: 0.9), value: pendingVoiceClarification != nil)
         .animation(.easeInOut(duration: 0.22), value: isDescriptionPresented)
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: isComposerExpanded)
@@ -274,12 +270,9 @@ struct QuickCaptureCard: View {
         .onChange(of: voiceInput.isListening) { wasListening, isListening in
             if isListening {
                 isFinalizingVoiceSubmission = false
-                isVoicePulsing = false
-                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
-                    isVoicePulsing = true
-                }
+                isVoicePulsing = true
             } else {
-                withAnimation(.easeOut(duration: 0.35)) { isVoicePulsing = false }
+                isVoicePulsing = false
                 if wasListening && shouldSubmitVoiceWhenStopped {
                     voiceProcessingStartedAt = .now
                     isFinalizingVoiceSubmission = true
@@ -339,12 +332,12 @@ struct QuickCaptureCard: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(MemoryTheme.onAccent)
                             .frame(width: 58, height: 58)
                             .background(MemoryTheme.accent)
                             .clipShape(Circle())
                             .overlay {
-                                Circle().stroke(Color.white.opacity(0.16), lineWidth: 1)
+                                Circle().stroke(MemoryTheme.onAccent.opacity(0.16), lineWidth: 1)
                             }
                     }
                     .buttonStyle(.plain)
@@ -369,7 +362,7 @@ struct QuickCaptureCard: View {
 #if os(macOS)
     private var desktopCaptureBody: some View {
         VStack(spacing: 28) {
-            desktopOrbCluster(size: 164)
+            desktopOrbCluster(size: 240)
             compactBody
                 .frame(maxWidth: 540)
                 .opacity(isFinalizingVoiceSubmission || pendingVoiceClarification != nil ? 0 : 1)
@@ -396,26 +389,15 @@ struct QuickCaptureCard: View {
             .disabled(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
             .accessibilityLabel(voiceOrbAccessibilityLabel)
 
-            Group {
+            ZStack {
                 if pendingVoiceClarification != nil {
                     voiceClarificationCard
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .transition(.opacity.combined(with: .offset(y: 8)))
                 } else if isFinalizingVoiceSubmission {
-                    voiceProcessingStatus
-                        .transition(.opacity)
-                } else {
-                    VStack(spacing: 5) {
-                        Text(voiceInput.isListening ? "Говорите…" : "Что нужно запомнить?")
-                            .font(.system(size: 19, weight: .medium, design: .rounded))
-                            .multilineTextAlignment(.center)
-
-                        Text(voiceInput.isListening ? "Нажмите на сферу, чтобы закончить" : "Голосом или текстом")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .transition(.opacity)
+                    voiceProcessingStatus.transition(.opacity)
                 }
             }
+
         }
     }
 #endif
@@ -427,7 +409,7 @@ struct QuickCaptureCard: View {
                     Button(action: submit) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(trimmedDraft.isEmpty ? Color.secondary : Color.white)
+                            .foregroundStyle(trimmedDraft.isEmpty ? Color.secondary : MemoryTheme.onAccent)
                             .frame(width: compactControlSize, height: compactControlSize)
                             .background(
                                 trimmedDraft.isEmpty
@@ -456,9 +438,9 @@ struct QuickCaptureCard: View {
                     axis: .vertical
                 )
                     .textFieldStyle(.plain)
-                    .lineLimit(1...(voiceInput.isListening ? 4 : 2))
+                    .lineLimit(1...(voiceInput.isListening ? 9 : 3))
                     .focused($focusedField, equals: .title)
-                    .allowsHitTesting(!voiceInput.isListening)
+                    .allowsHitTesting(!voiceInput.isListening && !isFinalizingVoiceSubmission)
                     .accessibilityIdentifier("quickCaptureField")
                     .onSubmit(handleSubmitKey)
 #if os(iOS)
@@ -520,69 +502,29 @@ struct QuickCaptureCard: View {
     private var homeBody: some View {
         GeometryReader { proxy in
             let isEditing = focusedField != nil
-            let orbSize = isEditing || proxy.size.height < 520
-                ? 112
-                : min(190, max(150, proxy.size.height * 0.25))
-
-            VStack(spacing: 0) {
-                VStack(spacing: voiceInput.isListening ? 38 : 30) {
-                    homeVoiceOrb(orbSize: orbSize)
-                        .offset(y: voiceInput.isListening ? -8 : 0)
-
-                    ZStack(alignment: .top) {
-                        Text("Скажи, о чём тебе нужно напомнить?")
-                            .font(.system(size: 26, weight: .medium, design: .rounded))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(3)
-                            .minimumScaleFactor(0.78)
-                            .frame(maxWidth: 380)
-                            .opacity(
-                                voiceInput.isListening
-                                    || isEditing
-                                    || isFinalizingVoiceSubmission
-                                    || pendingVoiceClarification != nil
-                                    ? 0 : 1
-                            )
-
-                        if pendingVoiceClarification != nil {
-                            voiceClarificationCard
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        } else if voiceInput.isListening {
-                            homeComposer
-                                .matchedGeometryEffect(id: "homeComposer", in: homeComposerNamespace)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        } else if isFinalizingVoiceSubmission {
-                            voiceProcessingStatus
-                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                        }
-                    }
-                    .frame(height: 180, alignment: .top)
+            // The same orb and composer survive all voice phases.
+            let orbSize: CGFloat = isEditing ? 140 : min(240, max(180, proxy.size.height * 0.48))
+            VStack(spacing: 20) {
+                homeVoiceOrb(orbSize: orbSize)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if pendingVoiceClarification != nil {
+                    voiceClarificationCard
+                        .transition(.opacity.combined(with: .offset(y: 10)))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-                VStack(spacing: 18) {
-                    if !isEditing {
-                        homePrioritySection
-                    }
+                if isFinalizingVoiceSubmission {
+                    voiceProcessingStatus
+                        .transition(.opacity.combined(with: .offset(y: 8)))
                 }
-                .opacity(
-                    voiceInput.isListening || isFinalizingVoiceSubmission || pendingVoiceClarification != nil
-                        ? 0 : 1
-                )
-                .allowsHitTesting(
-                    !voiceInput.isListening
-                        && !isFinalizingVoiceSubmission
-                        && pendingVoiceClarification == nil
-                )
+                homePrioritySection
+                    .opacity(isEditing || voiceInput.isListening || isFinalizingVoiceSubmission ? 0 : 1)
+                    .allowsHitTesting(!isEditing && !voiceInput.isListening && !isFinalizingVoiceSubmission)
+                    .accessibilityHidden(isEditing || voiceInput.isListening || isFinalizingVoiceSubmission)
+                    .offset(y: voiceInput.isListening ? 12 : 0)
             }
-            .frame(maxWidth: 620)
+            .frame(maxWidth: 560)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 22)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard focusedField != nil else { return }
-                dismissKeyboard()
-            }
+            .padding(.horizontal, MemoryTheme.pageInset)
+            .animation(reduceMotion ? nil : MemoryTheme.motion, value: isEditing)
         }
     }
 
@@ -675,7 +617,7 @@ struct QuickCaptureCard: View {
             }
             .padding(14)
             .frame(maxWidth: 430)
-            .background(.regularMaterial)
+            .background(MemoryTheme.card)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -823,7 +765,7 @@ struct QuickCaptureCard: View {
                     Button(action: submit) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(trimmedDraft.isEmpty ? Color.secondary : Color.white)
+                            .foregroundStyle(trimmedDraft.isEmpty ? Color.secondary : MemoryTheme.onAccent)
                             .frame(width: 40, height: 40)
                             .background(
                                 trimmedDraft.isEmpty
@@ -839,12 +781,12 @@ struct QuickCaptureCard: View {
                 }
 
                 TextField(
-                    voiceInput.isListening ? "Говорите…" : "Написать напоминание",
+                    isFinalizingVoiceSubmission ? "Обрабатываю…" : voiceInput.isListening ? "Говорите…" : "Записать мысль",
                     text: $draft,
                     axis: .vertical
                 )
                     .textFieldStyle(.plain)
-                    .lineLimit(1...(voiceInput.isListening ? 4 : 2))
+                    .lineLimit(1...(voiceInput.isListening ? 9 : 3))
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($focusedField, equals: .title)
                     .allowsHitTesting(!voiceInput.isListening)
@@ -1084,7 +1026,7 @@ struct QuickCaptureCard: View {
         } label: {
             Image(systemName: voiceInput.isListening ? "stop.fill" : "mic.fill")
                 .font(.system(size: isDocked ? 17 : 14, weight: .semibold))
-                .foregroundStyle(voiceInput.isListening ? Color.white : MemoryTheme.accent)
+                .foregroundStyle(voiceInput.isListening ? MemoryTheme.onAccent : MemoryTheme.accent)
                 .frame(width: size, height: size)
                 .background(
                     voiceInput.isListening

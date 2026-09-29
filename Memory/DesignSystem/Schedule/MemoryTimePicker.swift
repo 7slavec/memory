@@ -1,167 +1,73 @@
 import SwiftUI
 
-#if os(macOS)
 struct MemoryTimePicker: View {
     @Binding var selection: Date
     @Binding var isPresented: Bool
-    @State private var typedTime: String
-    @State private var hasInvalidTime = false
-
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
-    private let timeOptions = [
-        8 * 60, 9 * 60, 9 * 60 + 30, 10 * 60,
-        12 * 60, 13 * 60, 14 * 60, 15 * 60,
-        17 * 60, 18 * 60, 19 * 60, 20 * 60,
-        21 * 60, 22 * 60, 23 * 60, 23 * 60 + 30
-    ]
+    @State private var hour: String
+    @State private var minute: String
 
     init(selection: Binding<Date>, isPresented: Binding<Bool>) {
         _selection = selection
         _isPresented = isPresented
-        _typedTime = State(initialValue: Self.timeString(from: selection.wrappedValue))
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: selection.wrappedValue)
+        _hour = State(initialValue: String(format: "%02d", parts.hour ?? 9))
+        _minute = State(initialValue: String(format: "%02d", parts.minute ?? 0))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Выберите время")
-                        .font(.headline)
-                    Text("Одним нажатием или введите точное")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button {
-                    isPresented = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .frame(width: 28, height: 28)
-                        .background(Color.primary.opacity(0.055))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
+#if os(iOS)
+        DatePicker("Время", selection: $selection, displayedComponents: .hourAndMinute)
+            .datePickerStyle(.wheel).labelsHidden()
+            .environment(\.locale, Locale(identifier: "ru_RU"))
+            .frame(width: 300, height: 210).clipped()
+            .padding(8).background(MemoryTheme.card)
+#else
+        VStack(spacing: 16) {
+            HStack(spacing: 10) {
+                timeField("Часы", value: $hour)
+                Text(":").font(.system(size: 36, weight: .light)).foregroundStyle(.secondary)
+                timeField("Минуты", value: $minute)
             }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Быстрый выбор")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(timeOptions, id: \.self) { minutes in
-                        timeButton(minutes)
+            .onChange(of: hour) { _, _ in apply() }
+            .onChange(of: minute) { _, _ in apply() }
+            HStack(spacing: 8) {
+                ForEach([9, 12, 18, 21], id: \.self) { value in
+                    Button(String(format: "%02d:00", value)) {
+                        hour = String(format: "%02d", value); minute = "00"
+                        apply(); isPresented = false
                     }
+                    .font(.system(size: 14).monospacedDigit())
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(MemoryTheme.raised, in: Capsule())
+                    .buttonStyle(.plain)
                 }
             }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Точное время")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 10) {
-                    TextField("ЧЧ:ММ", text: $typedTime)
-                        .textFieldStyle(.plain)
-                        .font(.body.monospacedDigit())
-                        .padding(.horizontal, 12)
-                        .frame(height: 36)
-                        .background(Color.primary.opacity(0.045))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(hasInvalidTime ? Color.red : Color.primary.opacity(0.07), lineWidth: 1)
-                        }
-                        .onSubmit(applyTypedTime)
-                        .onChange(of: typedTime) { _, _ in hasInvalidTime = false }
-
-                    Button("Применить") {
-                        applyTypedTime()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(MemoryTheme.accent)
-                }
-
-                if hasInvalidTime {
-                    Text("Введите время в формате 09:30")
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                }
+            if !valid {
+                Text("Часы 0–23, минуты 0–59").font(.caption).foregroundStyle(MemoryTheme.danger)
             }
         }
-        .padding(18)
-        .frame(width: 340)
-        .background(MemoryTheme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.32), radius: 30, y: 16)
+        .padding(20).frame(width: 320).background(MemoryTheme.card)
+#endif
     }
 
-    private func timeButton(_ minutes: Int) -> some View {
-        let isSelected = selectedMinutes == minutes
-
-        return Button {
-            apply(minutes: minutes)
-            isPresented = false
-        } label: {
-            Text(Self.timeString(minutes: minutes))
-                .font(.system(size: 13, weight: isSelected ? .semibold : .regular).monospacedDigit())
-                .foregroundStyle(isSelected ? Color.white : Color.primary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 32)
-                .background(isSelected ? MemoryTheme.accent : Color.primary.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .buttonStyle(.plain)
+    private var valid: Bool {
+        guard let h = Int(hour), let m = Int(minute) else { return false }
+        return (0...23).contains(h) && (0...59).contains(m)
     }
 
-    private var selectedMinutes: Int {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: selection)
-        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+    private func timeField(_ name: String, value: Binding<String>) -> some View {
+        TextField(name, text: value)
+            .textFieldStyle(.plain)
+            .font(.system(size: 48, weight: .regular).monospacedDigit())
+            .multilineTextAlignment(.center)
+            .frame(width: 108, height: 92)
+            .background(MemoryTheme.raised, in: RoundedRectangle(cornerRadius: 20))
+            .accessibilityLabel(name)
+            .onSubmit { if valid { apply(); isPresented = false } }
     }
 
-    private func applyTypedTime() {
-        let parts = typedTime
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 2,
-              let hour = Int(parts[0]),
-              let minute = Int(parts[1]),
-              (0...23).contains(hour),
-              (0...59).contains(minute) else {
-            hasInvalidTime = true
-            return
-        }
-
-        apply(minutes: hour * 60 + minute)
-        isPresented = false
-    }
-
-    private func apply(minutes: Int) {
-        let calendar = Calendar.current
-        selection = calendar.date(
-            bySettingHour: minutes / 60,
-            minute: minutes % 60,
-            second: 0,
-            of: selection
-        ) ?? selection
-        typedTime = Self.timeString(minutes: minutes)
-    }
-
-    private static func timeString(from date: Date) -> String {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return timeString(minutes: (components.hour ?? 0) * 60 + (components.minute ?? 0))
-    }
-
-    private static func timeString(minutes: Int) -> String {
-        String(format: "%02d:%02d", minutes / 60, minutes % 60)
+    private func apply() {
+        guard valid, let h = Int(hour), let m = Int(minute) else { return }
+        selection = Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: selection) ?? selection
     }
 }
-#endif

@@ -1,159 +1,67 @@
 import SwiftUI
 
+/// Stable particle identities morph between states; only this small canvas ticks.
 struct GlassVoiceOrb: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isRotating = false
-
+    @Environment(\.scenePhase) private var scenePhase
     let isListening: Bool
     let isProcessing: Bool
     let isPulsing: Bool
     let size: CGFloat
 
-    private var isActive: Bool { isListening || isProcessing }
-
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    AngularGradient(
-                        colors: [
-                            Color(red: 1.0, green: 0.78, blue: 0.33).opacity(0.82),
-                            Color(red: 1.0, green: 0.32, blue: 0.58).opacity(0.78),
-                            MemoryTheme.accent.opacity(0.74),
-                            Color.cyan.opacity(0.44),
-                            Color(red: 1.0, green: 0.78, blue: 0.33).opacity(0.82)
-                        ],
-                        center: .center
-                    )
-                )
-                .frame(width: size + 22, height: size + 22)
-                .rotationEffect(.degrees(isRotating ? 360 : 0))
-                .blur(radius: isActive ? 19 : 15)
-                .opacity(isActive ? 0.7 : 0.42)
-                .scaleEffect(isActive && isPulsing ? 1.08 : 1)
-
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 1.0, green: 0.78, blue: 0.33),
-                            Color(red: 1.0, green: 0.36, blue: 0.58),
-                            MemoryTheme.accent.opacity(0.94)
-                        ],
-                        startPoint: .topTrailing,
-                        endPoint: .bottomLeading
-                    )
-                )
-                .frame(width: size, height: size)
-
-            Circle()
-                .fill(
-                    AngularGradient(
-                        colors: [
-                            Color.white.opacity(0.72),
-                            Color.cyan.opacity(0.28),
-                            Color.clear,
-                            Color.purple.opacity(0.46),
-                            Color.white.opacity(0.64)
-                        ],
-                        center: .center
-                    )
-                )
-                .frame(width: size - 2, height: size - 2)
-                .opacity(isActive ? 0.92 : 0.72)
-                .rotationEffect(.degrees(isRotating ? 360 : 0))
-                .mask {
-                    ZStack {
-                        Circle()
-                        Circle()
-                            .inset(by: 7)
-                            .fill(.black)
-                            .blendMode(.destinationOut)
-                    }
-                    .compositingGroup()
-                }
-
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            Color.white.opacity(isActive ? 0.42 : 0.32),
-                            Color(red: 1.0, green: 0.63, blue: 0.24).opacity(0.32),
-                            Color.pink.opacity(0.08),
-                            Color.clear
-                        ],
-                        center: UnitPoint(x: 0.58, y: 0.38),
-                        startRadius: 2,
-                        endRadius: size * 0.58
-                    )
-                )
-                .frame(width: size - 14, height: size - 14)
-
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color.purple.opacity(0.46), Color.clear],
-                        center: UnitPoint(x: 0.38, y: 0.8),
-                        startRadius: 0,
-                        endRadius: size * 0.54
-                    )
-                )
-                .frame(width: size - 10, height: size - 10)
-                .blendMode(.plusLighter)
-
-            Ellipse()
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.78), Color.white.opacity(0.06)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(width: size * 0.52, height: size * 0.22)
-                .blur(radius: 7)
-                .rotationEffect(.degrees(-24))
-                .offset(x: -size * 0.17, y: -size * 0.27)
-
-            Circle()
-                .stroke(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.76), Color.white.opacity(0.08), Color.white.opacity(0.4)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.2
-                )
-                .frame(width: size, height: size)
+        TimelineView(.animation(minimumInterval: 1.0 / 30,
+                                paused: reduceMotion || scenePhase != .active || !(isListening || isProcessing))) { context in
+            VoiceParticleField(
+                listening: isListening ? 1 : 0,
+                processing: isProcessing ? 1 : 0,
+                time: reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
+            )
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.65), value: isListening)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.65), value: isProcessing)
         }
         .frame(width: size + 30, height: size + 30)
-        .compositingGroup()
-        .shadow(
-            color: MemoryTheme.accent.opacity(isActive ? 0.3 : 0.16),
-            radius: isActive ? 34 : 24,
-            y: 12
-        )
-        .scaleEffect(isActive && isPulsing ? 1.025 : 1)
-        .animation(.easeInOut(duration: 1.5), value: isPulsing)
-        .onAppear { updateRotation(isActive: isActive) }
-        .onChange(of: isActive) { _, active in
-            updateRotation(isActive: active)
-        }
         .accessibilityHidden(true)
     }
+}
 
-    private func updateRotation(isActive: Bool) {
-        guard !reduceMotion, isActive else {
-            var transaction = Transaction()
-            transaction.animation = nil
-            withTransaction(transaction) {
-                isRotating = false
+private struct VoiceParticleField: View, Animatable {
+    var listening: Double
+    var processing: Double
+    let time: Double
+    var animatableData: AnimatablePair<Double, Double> {
+        get { AnimatablePair(listening, processing) }
+        set { listening = newValue.first; processing = newValue.second }
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let radius = min(size.width, size.height) * 0.39
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            for index in 0..<144 {
+                let i = Double(index)
+                let angle = i * 2.3999632297
+                let depth = sqrt((i + 0.5) / 144)
+                // Keep phase continuous through the fade-out; only the animated
+                // weights change. Resetting phase on stop makes the clusters jump.
+                let phase = time * 0.65
+                let wave = sin(angle * 3) * 0.018 + sin(angle * 3 + phase) * listening * 0.055
+                let drift = sin(phase * 1.8 + i) * listening * 0.018
+                let circleX = cos(angle) * depth * (1 + wave + drift)
+                let circleY = sin(angle) * depth * (1 - wave + drift)
+                let cluster = Double(index % 3)
+                let orbit = cluster * .pi * 2 / 3 + phase
+                let clusterDepth = sqrt(Double(index / 3 + 1) / 48) * 0.34
+                let processX = cos(orbit) * 0.55 + cos(angle) * clusterDepth
+                let processY = sin(orbit) * 0.55 + sin(angle) * clusterDepth
+                let x = circleX + (processX - circleX) * processing
+                let y = circleY + (processY - circleY) * processing
+                let diameter = 2.3 + (1 - depth) * 1.6
+                let rect = CGRect(x: center.x + x * radius - diameter / 2,
+                                  y: center.y + y * radius - diameter / 2,
+                                  width: diameter, height: diameter)
+                context.fill(Path(ellipseIn: rect), with: .color(.primary.opacity(0.4 + depth * 0.6)))
             }
-            return
-        }
-
-        isRotating = false
-        withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
-            isRotating = true
         }
     }
 }

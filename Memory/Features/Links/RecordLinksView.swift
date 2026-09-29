@@ -43,7 +43,6 @@ struct RecordLinksView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if isChoosing {
@@ -67,16 +66,26 @@ struct RecordLinksView: View {
                     LazyVStack(spacing: 8) {
                         ForEach(displayedItems) { other in
                             HStack(spacing: 8) {
-                                MemoryItemRow(item: other, onEdit: {
+                                Button {
                                     if isChoosing { add(other) }
                                     else {
                                         if other.id != item.id { onOpen(other) }
                                         dismiss()
                                     }
-                                }, showsContextMenu: false)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(other.title).font(.system(size: 16, weight: .medium)).multilineTextAlignment(.leading)
+                                        if let date = other.dueDate {
+                                            Text(MemoryDateFormatting.shortDateTime(date)).font(.system(size: 12)).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(14).background(MemoryTheme.raised, in: RoundedRectangle(cornerRadius: 16))
+                                }
+                                .buttonStyle(.plain)
                                 .overlay {
                                     if !isChoosing && other.id == item.id {
-                                        RoundedRectangle(cornerRadius: 24)
+                                        RoundedRectangle(cornerRadius: 16)
                                             .stroke(MemoryTheme.accent.opacity(0.4), lineWidth: 1)
                                             .allowsHitTesting(false)
                                     }
@@ -84,7 +93,7 @@ struct RecordLinksView: View {
                                 .accessibilityHint(other.id == item.id ? "Текущая запись" : "Открыть запись")
                                 if !isChoosing && groupIDs.count > 1 {
                                     Button { remove(other) } label: {
-                                        Image(systemName: "minus")
+                                        Image(systemName: "xmark")
                                             .font(.system(size: 14, weight: .semibold))
                                             .frame(width: 32, height: 32)
                                             .background(.primary.opacity(0.06), in: Circle())
@@ -99,67 +108,44 @@ struct RecordLinksView: View {
                     }
                 }
                 .frame(maxWidth: 680)
-                .padding(18)
+                .padding(14)
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            if !isChoosing && groupIDs.count > 1 {
-                Button("Разорвать связь", role: .destructive, action: dissolve)
-                    .buttonStyle(.plain)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.red)
-                    .frame(minHeight: 44)
-                    .padding(.bottom, 8)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { linkActions }
+                VStack(spacing: 8) { linkActions }
             }
+            .padding(.horizontal, 14).padding(.bottom, 14)
+
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(MemoryTheme.background)
+        .background(MemoryTheme.card)
         .alert("Не удалось изменить связь", isPresented: Binding(
             get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
         )) { Button("ОК", role: .cancel) {} } message: { Text(errorMessage ?? "") }
         .onChange(of: account.userID) { _, _ in dismiss() }
-#if os(macOS)
-        // Compact for a small group, bounded and scrollable for long text/many records.
-        .frame(height: min(480, CGFloat(isChoosing ? 180 : 152) + CGFloat(displayedItems.count) * 80))
-#endif
+        // Bounded content on both platforms; long groups scroll.
+        .frame(height: min(480, CGFloat(isChoosing ? 150 : 96) + CGFloat(displayedItems.count) * 80))
+        .accessibilityAction(.escape) { dismiss() }
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            if isChoosing {
-                Button {
-                    isChoosing = false; search = ""
-                } label: {
-                    Image(systemName: "arrow.left").font(.system(size: 17, weight: .semibold))
-                        .frame(width: 44, height: 44).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).accessibilityLabel("Назад")
+    @ViewBuilder private var linkActions: some View {
+        if isChoosing {
+            Button { isChoosing = false; search = "" } label: {
+                Label("Назад", systemImage: "arrow.left")
+            }.buttonStyle(MemoryActionStyle())
+        } else {
+            if groupIDs.count > 1 {
+                Button("Разорвать", role: .destructive, action: dissolve)
+                    .buttonStyle(MemoryActionStyle())
             }
-            headerTitle
-            Spacer(minLength: 0)
-            if !isChoosing {
-                Button { isChoosing = true } label: {
-                    Image(systemName: "plus").font(.system(size: 17, weight: .semibold))
-                        .frame(width: 44, height: 44).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).foregroundStyle(MemoryTheme.accent)
-                .accessibilityLabel("Связать запись")
-                .accessibilityIdentifier("addRecordLink")
+            Button { isChoosing = true } label: {
+                Label("Добавить", systemImage: "plus")
             }
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.system(size: 15, weight: .semibold))
-                    .frame(width: 44, height: 44).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).foregroundStyle(.secondary)
-            .accessibilityLabel("Закрыть связи")
+            .buttonStyle(MemoryActionStyle(prominent: true))
+            .accessibilityLabel("Связать запись").accessibilityIdentifier("addRecordLink")
         }
-        .padding(.horizontal, 18)
-        .frame(minHeight: 64)
-    }
-
-    private var headerTitle: some View {
-        Text(isChoosing ? "Выбрать запись" : "Связанные записи")
-            .font(.system(size: 17, weight: .medium, design: .rounded))
     }
 
     private func add(_ other: Item) {

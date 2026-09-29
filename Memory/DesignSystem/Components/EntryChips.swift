@@ -4,13 +4,13 @@ struct MemoryEntryKindBadge: View {
     let kind: EntryKind
 
     var body: some View {
-        let color = kind == .event ? MemoryTheme.warm : MemoryTheme.accent
+        let color = MemoryTheme.accent
         return Text(kind.title)
-            .font(.subheadline.weight(.semibold))
+            .font(.subheadline.weight(.medium))
             .foregroundStyle(color)
             .padding(.horizontal, 13)
             .frame(minHeight: 34)
-            .background(color.opacity(0.1))
+            .background(MemoryTheme.card)
             .clipShape(Capsule())
             .overlay {
                 Capsule().stroke(color.opacity(0.16), lineWidth: 1)
@@ -42,11 +42,11 @@ struct MemoryScheduleValueBadge: View {
     var body: some View {
         Text(value)
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(MemoryTheme.accent)
+            .foregroundStyle(.primary)
             .lineLimit(1)
             .padding(.horizontal, 10)
             .frame(minHeight: 34)
-            .background(MemoryTheme.accent.opacity(0.09))
+            .background(MemoryTheme.raised)
             .clipShape(Capsule())
             .fixedSize(horizontal: true, vertical: false)
     }

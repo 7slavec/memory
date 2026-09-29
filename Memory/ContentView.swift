@@ -482,7 +482,7 @@ struct ContentView: View {
                 if isDesktopSidebarCollapsed {
                     Text(desktopProfileInitial)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(MemoryTheme.onAccent)
                         .frame(width: 42, height: 42)
                         .background(MemoryTheme.accent.gradient)
                         .clipShape(Circle())
@@ -491,7 +491,7 @@ struct ContentView: View {
                     HStack(spacing: 11) {
                         Text(desktopProfileInitial)
                             .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(MemoryTheme.onAccent)
                             .frame(width: 36, height: 36)
                             .background(MemoryTheme.accent.gradient)
                             .clipShape(Circle())
@@ -518,7 +518,7 @@ struct ContentView: View {
             .help("Профиль")
             .keyboardShortcut("5", modifiers: .command)
         }
-        .background(.ultraThinMaterial)
+        .background(MemoryTheme.card)
         .clipped()
     }
 
@@ -562,7 +562,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                     .background(
                         desktopSection == section
-                            ? MemoryTheme.accent.opacity(0.12)
+                            ? MemoryTheme.accent
                             : Color.clear
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
@@ -592,7 +592,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
                 .background(
                     desktopSection == section
-                        ? MemoryTheme.accent.opacity(0.12)
+                        ? MemoryTheme.accent
                         : Color.clear
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -600,7 +600,7 @@ struct ContentView: View {
             }
         }
         .buttonStyle(.plain)
-        .foregroundStyle(desktopSection == section ? MemoryTheme.accent : Color.primary)
+        .foregroundStyle(desktopSection == section ? MemoryTheme.onAccent : Color.primary)
         .help(section.title)
         .keyboardShortcut(section.shortcut, modifiers: .command)
     }
@@ -723,11 +723,12 @@ struct ContentView: View {
     private var desktopNowPage: some View {
         ScrollView {
             VStack(spacing: 28) {
-                desktopPageHeader(
-                    title: "Сегодня",
-                    caption: Self.mainDateFormatter.string(from: currentDate)
-                )
-                .frame(maxWidth: 760)
+                HStack {
+                    Text(Self.mainDateFormatter.string(from: currentDate))
+                        .font(.system(size: 14)).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: 680)
 
                 if notificationsAreDisabled {
                     notificationSettingsBanner
@@ -744,10 +745,10 @@ struct ContentView: View {
                     onAdd: addItem
                 )
                 .id("mac-workspace-composer")
-                .frame(maxWidth: 680)
+                .frame(maxWidth: 580)
 
                 desktopPrioritySection
-                    .frame(maxWidth: 680)
+                    .frame(maxWidth: 560)
             }
             .padding(.horizontal, 30)
             .padding(.top, 26)
@@ -764,7 +765,15 @@ struct ContentView: View {
     ) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                desktopPageHeader(title: title, caption: nil)
+                HStack {
+                    desktopPageHeader(title: title, caption: nil)
+                    if allowsCapture {
+                        Button { withAnimation(MemoryTheme.motion) { isDesktopComposerPresented = true } } label: {
+                            Label("Новая запись", systemImage: "plus")
+                        }
+                        .buttonStyle(MemoryActionStyle(prominent: true))
+                    }
+                }
                 search
                 content
             }
@@ -846,31 +855,6 @@ struct ContentView: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity)
             .transition(.move(edge: .bottom).combined(with: .opacity))
-        } else {
-            HStack {
-                Spacer()
-                Button {
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
-                        isDesktopComposerPresented = true
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 54, height: 54)
-                        .background(MemoryTheme.accent.gradient)
-                        .clipShape(Circle())
-                        .shadow(color: MemoryTheme.accent.opacity(0.2), radius: 12, y: 6)
-                }
-                .buttonStyle(.plain)
-                .help("Добавить напоминание")
-                .accessibilityLabel("Добавить напоминание")
-            }
-            .frame(maxWidth: 820)
-            .padding(.horizontal, 30)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity)
-            .transition(.scale(scale: 0.84, anchor: .bottomTrailing).combined(with: .opacity))
         }
     }
 
@@ -1568,7 +1552,7 @@ struct ContentView: View {
                                 .font(.body.weight(.medium))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 15)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(MemoryTheme.onAccent)
                                 .background(MemoryTheme.accent.gradient)
                                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         }
@@ -1641,7 +1625,7 @@ struct ContentView: View {
         VStack(spacing: 16) {
             Text(profileInitial)
                 .font(.system(size: 36, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(MemoryTheme.onAccent)
                 .frame(width: 96, height: 96)
                 .background(MemoryTheme.accent.gradient)
                 .clipShape(Circle())
@@ -2256,7 +2240,8 @@ struct ContentView: View {
 
     private func taskRows(_ source: [Item]) -> some View {
         let index = RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID)
-        return LazyVStack(spacing: 10) {
+        let nextID = activeItems.first { ($0.dueDate ?? .distantPast) >= currentDate }?.id
+        return LazyVStack(spacing: 12) {
             ForEach(source, id: \.persistentModelID) { item in
                 MemoryItemRow(
                     item: item,
@@ -2270,7 +2255,8 @@ struct ContentView: View {
                     onOpenLinks: {
                         guard !suppressItemOpening else { return }
                         linkPopupItemID = item.id
-                    }
+                    },
+                    isPriority: item.id == nextID
                 )
                 .recordLinksPopup(item: item, isPresented: Binding(
                     get: { linkPopupItemID == item.id },

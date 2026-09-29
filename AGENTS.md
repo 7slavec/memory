@@ -3,6 +3,7 @@
 ## Read only the relevant slice
 
 - Start with `docs/SYSTEM.md`: service map, component ownership, accepted design rules, and verification protocol.
+- For current visuals and schedule presentation read `docs/FLOW-REDESIGN.md`; it supersedes the earlier purple/gold styling and centered modal pickers.
 - Read `docs/AUDIT-2026-09-27.md` for known gaps and the staged refactor. An open finding is not permission to change product behavior silently.
 - `PRODUCT_ROADMAP.md` owns feature order; `EVENTS_PRODUCT_SPEC.md` is historical event implementation context. Where older text conflicts with the latest approved rules in SYSTEM.md, flag the conflict instead of guessing.
 - Locate a symbol with `rg -n` and read that section. Do not load the whole root screen for a calendar, chip, or card change.

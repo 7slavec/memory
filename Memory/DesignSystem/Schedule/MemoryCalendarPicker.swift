@@ -1,15 +1,16 @@
 import SwiftUI
 
-#if os(macOS)
 struct MemoryCalendarPicker: View {
     @Binding var selection: Date
     @Binding var isPresented: Bool
     @State private var visibleMonth: Date
+    let minimumDate: Date?
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
     private let weekdayTitles = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
-    init(selection: Binding<Date>, isPresented: Binding<Bool>) {
+    init(selection: Binding<Date>, isPresented: Binding<Bool>, minimumDate: Date? = nil) {
+        self.minimumDate = minimumDate
         _selection = selection
         _isPresented = isPresented
         _visibleMonth = State(initialValue: Self.startOfMonth(for: selection.wrappedValue))
@@ -20,7 +21,7 @@ struct MemoryCalendarPicker: View {
             HStack {
                 Button { moveMonth(by: -1) } label: {
                     Image(systemName: "chevron.left")
-                        .frame(width: 30, height: 30)
+                        .frame(width: 44, height: 44)
                         .background(Color.primary.opacity(0.055))
                         .clipShape(Circle())
                 }
@@ -54,63 +55,48 @@ struct MemoryCalendarPicker: View {
                     if let day {
                         calendarDay(day)
                     } else {
-                        Color.clear.frame(height: 34)
+                        Color.clear.frame(height: 44)
                     }
                 }
             }
 
-            Divider()
 
-            HStack {
-                Button("Сегодня") {
-                    selectDay(.now)
-                    visibleMonth = Self.startOfMonth(for: .now)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(MemoryTheme.accent)
-
-                Spacer()
-
-                Button("Готово") {
-                    isPresented = false
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(MemoryTheme.accent)
-            }
         }
-        .padding(18)
-        .frame(width: 340)
+        .padding(14)
+        .frame(width: 336)
         .background(MemoryTheme.card)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.32), radius: 30, y: 16)
+
     }
 
     private func calendarDay(_ day: Date) -> some View {
         let isSelected = calendar.isDate(day, inSameDayAs: selection)
         let isToday = calendar.isDateInToday(day)
 
+        let available = minimumDate.map { calendar.startOfDay(for: day) >= calendar.startOfDay(for: $0) } ?? true
         return Button {
             selectDay(day)
+            isPresented = false
         } label: {
             ZStack {
                 if isSelected {
-                    Circle().fill(MemoryTheme.accent)
+                    Circle().fill(MemoryTheme.highlight)
                 } else if isToday {
-                    Circle().stroke(MemoryTheme.accent.opacity(0.65), lineWidth: 1.5)
+                    Circle().stroke(Color.primary.opacity(0.2), lineWidth: 1)
                 }
 
                 Text("\(calendar.component(.day, from: day))")
-                    .font(.system(size: 13, weight: isSelected || isToday ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.white : Color.primary)
+                    .font(.system(size: 21, weight: isSelected || isToday ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? MemoryTheme.onHighlight : Color.primary)
             }
-            .frame(width: 34, height: 34)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .disabled(!available)
+        .opacity(available ? 1 : 0.25)
+        .accessibilityLabel(MemoryDateFormatting.editorDate(day))
     }
 
     private var calendar: Calendar {
@@ -168,5 +154,3 @@ struct MemoryCalendarPicker: View {
         return formatter
     }()
 }
-
-#endif

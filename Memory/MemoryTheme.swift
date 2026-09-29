@@ -35,23 +35,56 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 }
 
 enum MemoryTheme {
-    static let accent = Color(red: 0.38, green: 0.36, blue: 0.92)
-    static let accentSoft = Color(red: 0.88, green: 0.87, blue: 1.0)
-    static let warm = Color(red: 1.0, green: 0.69, blue: 0.37)
+    static let accent = adaptive(light: 0x171717, dark: 0xF4F4F4)
+    static let onAccent = adaptive(light: 0xFFFFFF, dark: 0x141414)
+    static let accentSoft = adaptive(light: 0xE8E8E8, dark: 0x343434)
+    static let warm = accent
+    static let highlight = Color(red: 231/255, green: 243/255, blue: 99/255)
+    static let onHighlight = Color(red: 28/255, green: 33/255, blue: 16/255)
+    static let background = adaptive(light: 0xFFFFFF, dark: 0x131313)
+    static let card = adaptive(light: 0xF2F2F2, dark: 0x242424)
+    static let raised = adaptive(light: 0xE8E8E8, dark: 0x343434)
+    static let secondaryText = adaptive(light: 0x626262, dark: 0xB6B6B6)
+    static let danger = adaptive(light: 0xAB3826, dark: 0xFFAC99)
+    static let cardRadius: CGFloat = 20
+    static let pageInset: CGFloat = 20
+    static let motion = Animation.spring(response: 0.48, dampingFraction: 0.92)
 
-    static var background: Color {
+    private static func adaptive(light: UInt, dark: UInt) -> Color {
 #if os(macOS)
-        Color(nsColor: .windowBackgroundColor)
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: Double((hex >> 16) & 255) / 255,
+                           green: Double((hex >> 8) & 255) / 255,
+                           blue: Double(hex & 255) / 255, alpha: 1)
+        })
 #else
-        Color(uiColor: .systemGroupedBackground)
+        Color(uiColor: UIColor { traits in
+            let hex = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: Double((hex >> 16) & 255) / 255,
+                           green: Double((hex >> 8) & 255) / 255,
+                           blue: Double(hex & 255) / 255, alpha: 1)
+        })
 #endif
     }
+}
 
-    static var card: Color {
-#if os(macOS)
-        Color(nsColor: .controlBackgroundColor)
-#else
-        Color(uiColor: .secondarySystemGroupedBackground)
-#endif
+/// Shared neutral control: geometry stays stable on hover and press.
+struct MemoryActionStyle: ButtonStyle {
+    var prominent = false
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(prominent ? MemoryTheme.onAccent : MemoryTheme.accent)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 44)
+            .background(prominent ? MemoryTheme.accent : (hovered ? MemoryTheme.raised : MemoryTheme.card), in: Capsule())
+            .opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.78 : hovered ? 0.9 : 1)
+            .onHover { hovered = $0 }
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: configuration.isPressed)
     }
 }

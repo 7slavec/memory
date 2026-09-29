@@ -114,7 +114,7 @@ struct VoiceBatchReviewView<Header: View>: View {
                 _ = onSave()
             } label: {
                 Text(primaryActionTitle)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(MemoryTheme.onAccent)
                     .padding(.horizontal, 20)
                     .frame(minHeight: actionHeight)
                     .background(session.canSave ? MemoryTheme.accent : Color.secondary.opacity(0.3))

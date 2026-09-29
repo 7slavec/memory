@@ -8,43 +8,28 @@ struct MemoryItemRow: View {
     var showsContextMenu = true
     var linkedCount = 0
     var onOpenLinks: (() -> Void)? = nil
+    var isPriority = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var hovered = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            if !item.isEvent, let onToggle {
-                Button(action: onToggle) {
-                    Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(item.isCompleted ? MemoryTheme.accent : Color.secondary.opacity(0.65))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 4)
-            }
+        HStack(alignment: .bottom, spacing: 4) {
             Button(action: onEdit) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title.isEmpty ? "Без названия" : item.title)
-                        .font(.body.weight(.medium)).foregroundStyle(item.isCompleted ? Color.secondary : Color.primary)
-                        .strikethrough(item.isCompleted).multilineTextAlignment(.leading)
-                    if let details = item.details {
-                        Text(details)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 18) {
+                        if let date = item.dueDate { timeColumn(date) }
+                        copy
                     }
-                    if item.isEvent {
-                        Text(dateLabel)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(dateColor)
-                    } else {
-                        Label(dateLabel, systemImage: dateIcon)
-                            .font(.caption)
-                            .foregroundStyle(dateColor)
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let date = item.dueDate { timeColumn(date) }
+                        copy
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(item.title), \(item.entryKind.title)\(item.dueDate.map { ", " + MemoryDateFormatting.shortDateTime($0) } ?? "")")
             if linkedCount > 0 {
                 Button(action: onOpenLinks ?? onEdit) {
                     MemoryLinkCircle(count: linkedCount)
@@ -53,12 +38,19 @@ struct MemoryItemRow: View {
                 .accessibilityIdentifier("recordLinksBadge")
             }
         }
-        .padding(.horizontal, 17)
-        .padding(.vertical, 15)
-        .memoryEntryCard(isEvent: item.isEvent)
+        .padding(18)
+        .foregroundStyle(isPriority ? MemoryTheme.onHighlight : MemoryTheme.accent)
+        .background(isPriority ? MemoryTheme.highlight : (hovered ? MemoryTheme.raised : MemoryTheme.card),
+                    in: RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
+        .onHover { hovered = $0 }
         .contextMenu {
             if showsContextMenu {
                 Button(action: onEdit) { Label("Изменить", systemImage: "pencil") }
+                if !item.isEvent, let onToggle {
+                    Button(action: onToggle) {
+                        Label(item.isCompleted ? "Вернуть" : "Выполнено", systemImage: "checkmark")
+                    }
+                }
                 if let onDelete {
                     Button(role: .destructive, action: onDelete) { Label("Удалить", systemImage: "trash") }
                 }
@@ -66,42 +58,50 @@ struct MemoryItemRow: View {
         }
     }
 
-    private var dateLabel: String {
-        if item.isEvent, let startDate = item.dueDate {
-            let start = MemoryDateFormatting.time(startDate)
-            if let endDate = item.endDate {
-                let end = MemoryDateFormatting.time(endDate)
-                if startDate <= .now, endDate > .now { return "Сейчас · до \(end)" }
-                if Calendar.current.isDateInToday(startDate) { return "Сегодня · \(start)–\(end)" }
-                if Calendar.current.isDateInTomorrow(startDate) { return "Завтра · \(start)–\(end)" }
-                return "\(MemoryDateFormatting.shortDate(startDate)) · \(start)–\(end)"
+    private func timeColumn(_ date: Date) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(MemoryDateFormatting.time(date))
+                .font(.system(size: 30, weight: .regular)).tracking(-1.2).monospacedDigit()
+            if item.isEvent, let end = item.endDate {
+                HStack(spacing: 5) {
+                    Capsule().fill(.primary.opacity(0.3)).frame(width: 2, height: 16)
+                    Text("до \(MemoryDateFormatting.time(end))")
+                        .font(.system(size: 13)).monospacedDigit()
+                }
             }
-            if Calendar.current.isDateInToday(startDate) { return "Сегодня · \(start)" }
-            if Calendar.current.isDateInTomorrow(startDate) { return "Завтра · \(start)" }
-            return "\(MemoryDateFormatting.shortDate(startDate)) · \(start)"
         }
-        if item.isCompleted {
-            guard let completedAt = item.completedAt else { return "Выполнено" }
-            return "Выполнено · \(MemoryDateFormatting.shortDate(completedAt))"
-        }
-        guard let date = item.dueDate else { return "Без срока" }
-        if date < .now { return "Просрочено · \(MemoryDateFormatting.time(date))" }
-        if Calendar.current.isDateInToday(date) { return "Сегодня · \(MemoryDateFormatting.time(date))" }
-        if Calendar.current.isDateInTomorrow(date) { return "Завтра · \(MemoryDateFormatting.time(date))" }
-        return MemoryDateFormatting.shortDateTime(date)
+        .fixedSize()
+        .opacity(item.isCompleted ? 0.55 : 1)
     }
-    private var dateIcon: String {
-        if item.isEvent { return "calendar" }
-        if item.isCompleted { return "checkmark" }
-        guard item.dueDate != nil else { return "tray" }
-        return item.notificationsEnabled ? "bell" : "calendar"
-    }
-    private var dateColor: Color {
-        guard !item.isCompleted, let date = item.dueDate else { return .secondary }
-        if item.isEvent, let endDate = item.endDate {
-            return endDate < .now ? .secondary : MemoryTheme.warm
+
+    private var copy: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(item.title.isEmpty ? "Без названия" : item.title)
+                .font(.system(size: 18, weight: .semibold))
+                .strikethrough(item.isCompleted)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            if let details = item.details, !details.isEmpty {
+                Text(details).font(.system(size: 14))
+                    .opacity(0.72).lineLimit(2).multilineTextAlignment(.leading)
+            }
+            if let date = item.dueDate {
+                Text(dateLabel(date))
+                    .font(.system(size: 12, weight: .medium)).opacity(0.7)
+                    .padding(.top, 4).multilineTextAlignment(.leading)
+            }
         }
-        if item.isEvent { return date < .now ? .secondary : MemoryTheme.warm }
-        return date < .now ? .red : MemoryTheme.accent
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func dateLabel(_ date: Date) -> String {
+        let day = Calendar.current.isDateInToday(date) ? "Сегодня"
+            : Calendar.current.isDateInTomorrow(date) ? "Завтра" : MemoryDateFormatting.editorDate(date)
+        if item.isCompleted { return "Выполнено · \(day)" }
+        if item.isEvent, let end = item.endDate, !Calendar.current.isDate(date, inSameDayAs: end) {
+            return "\(day) — \(MemoryDateFormatting.editorDate(end))"
+        }
+        if !item.isEvent, date < .now { return "Просрочено · \(day)" }
+        return day
     }
 }

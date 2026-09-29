@@ -5,11 +5,11 @@ extension View {
         popover(isPresented: isPresented) {
             RecordLinksPopupContent(item: item, onOpen: onOpen)
 #if os(macOS)
-                .frame(width: 420)
+                .frame(width: 360)
 #else
-                .presentationCompactAdaptation(.sheet)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .frame(width: 320)
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(MemoryTheme.card)
 #endif
         }
     }

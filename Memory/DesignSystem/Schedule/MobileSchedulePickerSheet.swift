@@ -143,7 +143,7 @@ struct MobileSchedulePickerSheet: View {
 
                 Text("\(calendar.component(.day, from: day))")
                     .font(.system(size: 18, weight: isSelected || isToday ? .semibold : .regular, design: .rounded))
-                    .foregroundStyle(isSelected ? Color.white : Color.primary)
+                    .foregroundStyle(isSelected ? MemoryTheme.onAccent : Color.primary)
                     .opacity(isAvailable ? 1 : 0.24)
             }
             .frame(maxWidth: .infinity)

@@ -37,15 +37,13 @@ struct ItemEditorView: View {
     @State private var isDiscardConfirmationPresented = false
     @State private var isLinksConfirmationPresented = false
     @State private var showsLinks = false
+    @State private var activeSchedulePicker: SchedulePickerTarget?
+    @State private var showsNotifications = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pendingLinkedRecord: Item?
     @State private var isSaveErrorPresented = false
-#if os(macOS)
-    @State private var isCalendarPresented = false
-    @State private var isTimePickerPresented = false
-    @State private var macPickerTarget: SchedulePickerTarget = .startDate
-#else
+#if os(iOS)
     @State private var isMobileEditorAtTop = true
-    @State private var mobileSchedulePicker: SchedulePickerTarget?
     @FocusState private var mobileFocusedField: MobileEditorField?
 #endif
 
@@ -122,20 +120,17 @@ struct ItemEditorView: View {
                         mobileKindPicker
 
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Настройки")
-                                .font(.system(size: 13, weight: .medium, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 2)
 
                             mobileScheduleCard
                             mobileNotificationCard
                         }
 
-                        if !isNew && entryKind == .reminder {
-                            mobileCompletionButton
-                        }
                         if !isNew {
-                            mobileDeleteButton
+                            HStack(spacing: 10) {
+                                mobileDeleteButton
+                                Spacer(minLength: 0)
+                                if entryKind == .reminder { mobileCompletionButton }
+                            }
                         }
                     }
                     .padding(.horizontal, 18)
@@ -174,13 +169,6 @@ struct ItemEditorView: View {
             Button("Не сохранять", role: .destructive) { closeEditor() }
             Button("Продолжить редактирование", role: .cancel) {}
         }
-        .sheet(item: $mobileSchedulePicker) { target in
-            mobileSchedulePickerSheet(target)
-                .presentationDetents([.height(target.editsDate ? 368 : 220)])
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(30)
-                .presentationBackground(MemoryTheme.card)
-        }
         .onChange(of: hasSchedule) { _, isScheduled in
             if !isScheduled { reminderOffsets.removeAll() }
         }
@@ -213,7 +201,7 @@ struct ItemEditorView: View {
                 Button(action: saveAndDismiss) {
                     Text(saveActionTitle ?? "Готово")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(MemoryTheme.accent)
+                        .foregroundStyle(.primary)
                         .frame(minWidth: 64, minHeight: 44, alignment: .trailing)
                         .contentShape(Rectangle())
                 }
@@ -234,7 +222,7 @@ struct ItemEditorView: View {
         VStack(alignment: .leading, spacing: 20) {
             TextField("Что нужно запомнить?", text: $title, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 29, weight: .medium, design: .rounded))
+                .font(.system(size: 31, weight: .medium, design: .rounded))
                 .lineSpacing(2)
                 .lineLimit(1...6)
                 .focused($mobileFocusedField, equals: .title)
@@ -249,9 +237,7 @@ struct ItemEditorView: View {
                 .accessibilityIdentifier("recordEditorTitle")
 
             if isDescriptionPresented {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 9) {
+                    VStack(alignment: .leading, spacing: 9) {
                     Text("Описание")
                         .font(.system(size: 13, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
@@ -299,261 +285,23 @@ struct ItemEditorView: View {
         entryChips
     }
 
-    private var mobileScheduleCard: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(entryKind == .event ? "Период" : "Дата и время")
-                    .font(.body.weight(.semibold))
-                Spacer()
-                if entryKind == .reminder || !hasSchedule {
-                    schedulePresenceButton
-                }
-            }
-            .padding(.bottom, hasSchedule ? 14 : 0)
+    private var mobileScheduleCard: some View { scheduleCard }
 
-            if hasSchedule {
-                Divider()
-                mobileScheduleValueRow(
-                    title: "Дата",
-                    startValue: MemoryDateFormatting.editorDate(scheduledDate),
-                    startTarget: .startDate,
-                    endValue: MemoryDateFormatting.editorDate(eventEndDate),
-                    endTarget: .endDate
-                )
-
-                Divider()
-
-                mobileScheduleValueRow(
-                    title: "Время",
-                    startValue: MemoryDateFormatting.time(scheduledDate),
-                    startTarget: .startTime,
-                    endValue: MemoryDateFormatting.time(eventEndDate),
-                    endTarget: .endTime
-                )
-
-                if !eventRangeIsValid {
-                    Text("Окончание должно быть позже начала")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 8)
-                }
-            }
-        }
-        .padding(17)
-        .memoryCard()
-        .animation(.easeInOut(duration: 0.18), value: hasSchedule)
-        .animation(.easeInOut(duration: 0.18), value: hasEventEnd)
-    }
-
-    private func mobileScheduleValueRow(
-        title: String,
-        startValue: String,
-        startTarget: SchedulePickerTarget,
-        endValue: String,
-        endTarget: SchedulePickerTarget
-    ) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                scheduleRowTitle(title)
-                Spacer(minLength: 8)
-                scheduleValueButton(startValue) { mobileSchedulePicker = startTarget }
-                if entryKind == .event {
-                    mobileScheduleEndControls(endValue: endValue, endTarget: endTarget)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    scheduleRowTitle(title)
-                    Spacer(minLength: 8)
-                    scheduleValueButton(startValue) { mobileSchedulePicker = startTarget }
-                }
-                if entryKind == .event {
-                    HStack(spacing: 8) {
-                        Spacer(minLength: 0)
-                        mobileScheduleEndControls(endValue: endValue, endTarget: endTarget)
-                    }
-                }
-            }
-        }
-        .frame(minHeight: 48)
-    }
-
-    @ViewBuilder
-    private func mobileScheduleEndControls(
-        endValue: String,
-        endTarget: SchedulePickerTarget
-    ) -> some View {
-        if hasEventEnd {
-            Text("—")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-            scheduleValueButton(endValue) { mobileSchedulePicker = endTarget }
-            removeEventEndButton
-        } else {
-            addEventEndButton(target: endTarget)
-        }
-    }
-
-    private func scheduleValueButton(
-        _ value: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        MemoryScheduleValueChip(value: value, action: action)
-    }
-
-    private func addEventEndButton(target: SchedulePickerTarget) -> some View {
-        Button {
-            addEventEnd(opening: target)
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(MemoryTheme.accent)
-                .frame(width: 32, height: 32)
-                .background(MemoryTheme.accent.opacity(0.1))
-                .clipShape(Circle())
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Добавить окончание")
-    }
-
-    private var removeEventEndButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                hasEventEnd = false
-            }
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-                .frame(width: 32, height: 32)
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(Circle())
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Убрать окончание")
-    }
-
-    private func addEventEnd(opening target: SchedulePickerTarget) {
-        eventEndDate = max(eventEndDate, scheduledDate.addingTimeInterval(3_600))
-        withAnimation(.easeInOut(duration: 0.18)) {
-            hasEventEnd = true
-        }
-        mobileSchedulePicker = target
-    }
-
-    private func mobileSchedulePickerSheet(_ target: SchedulePickerTarget) -> some View {
-        MobileSchedulePickerSheet(
-            target: target,
-            selection: target.editsEnd ? eventEndDate : scheduledDate,
-            minimumDate: scheduleMinimumDate(for: target),
-            onCommit: { value in
-                let normalizedValue = normalizedScheduleSelection(value, for: target)
-                if target.editsEnd {
-                    eventEndDate = normalizedValue
-                } else {
-                    scheduledDate = normalizedValue
-                }
-                mobileSchedulePicker = nil
-            }
-        )
-        .labelsHidden()
-    }
-
-    private func scheduleMinimumDate(for target: SchedulePickerTarget) -> Date? {
-        guard target.editsEnd else { return nil }
-        return target.editsDate
-            ? Calendar.current.startOfDay(for: scheduledDate)
-            : scheduledDate
-    }
-
-    private func normalizedScheduleSelection(
-        _ value: Date,
-        for target: SchedulePickerTarget
-    ) -> Date {
-        guard target.editsDate else { return value }
-
-        let calendar = Calendar.current
-        let currentValue = target.editsEnd ? eventEndDate : scheduledDate
-        let date = calendar.dateComponents([.year, .month, .day], from: value)
-        let time = calendar.dateComponents([.hour, .minute, .second], from: currentValue)
-        var components = DateComponents()
-        components.timeZone = calendar.timeZone
-        components.year = date.year
-        components.month = date.month
-        components.day = date.day
-        components.hour = time.hour
-        components.minute = time.minute
-        components.second = time.second
-        return calendar.date(from: components) ?? value
-    }
-
-    private var mobileNotificationCard: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 10) {
-                editorIcon(
-                    notificationsEnabled ? "bell.fill" : "bell.slash",
-                    color: applicationNotificationsEnabled ? MemoryTheme.accent : .secondary
-                )
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Уведомления").font(.body.weight(.semibold))
-                    Text(notificationSummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                Spacer()
-                Toggle("", isOn: notificationsEnabledBinding)
-                    .labelsHidden()
-                    .disabled(!hasSchedule || !applicationNotificationsEnabled)
-            }
-
-            if hasSchedule && notificationsEnabled {
-                Divider()
-                reminderSelectionList
-                    .disabled(!applicationNotificationsEnabled)
-                    .opacity(applicationNotificationsEnabled ? 1 : 0.46)
-            }
-        }
-        .padding(17)
-        .memoryCard()
-        .animation(.easeInOut(duration: 0.18), value: notificationsEnabled)
-    }
+    private var mobileNotificationCard: some View { notificationCard }
 
     private var mobileDeleteButton: some View {
-        Button(role: .destructive) {
-            isDeleteConfirmationPresented = true
-        } label: {
-            Label("Удалить запись", systemImage: "trash")
-                .font(.body.weight(.medium))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 15)
-                .background(Color.red.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        Button(role: .destructive) { isDeleteConfirmationPresented = true } label: {
+            Image(systemName: "trash").frame(width: 44, height: 44)
+                .background(MemoryTheme.card, in: Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).accessibilityLabel("Удалить запись")
     }
 
     private var mobileCompletionButton: some View {
         Button(action: saveToggleAndDismiss) {
-            Label(
-                item.isCompleted ? "Вернуть в активные" : "Отметить выполненным",
-                systemImage: item.isCompleted ? "arrow.uturn.backward" : "checkmark.circle"
-            )
-            .font(.body.weight(.medium))
-            .foregroundStyle(MemoryTheme.accent)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 15)
-            .background(MemoryTheme.accent.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Label(item.isCompleted ? "Вернуть" : "Выполнено", systemImage: "checkmark")
         }
-        .buttonStyle(.plain)
-        .disabled(trimmedTitle.isEmpty)
+        .buttonStyle(MemoryActionStyle(prominent: true)).disabled(!canSave)
     }
 
     private var strongDownDismissGesture: some Gesture {
@@ -602,26 +350,18 @@ struct ItemEditorView: View {
         VStack(spacing: 0) {
             macHeader
 
-            Divider()
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     macPrimaryContent
 
                     macKindPicker
 
-                    Text("Настройки")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 2)
 
                     macScheduleCard
                     macNotificationCard
                 }
                 .padding(isCompactDesktopPane ? 18 : 24)
             }
-
-            Divider()
 
             macFooter
         }
@@ -633,10 +373,7 @@ struct ItemEditorView: View {
             idealHeight: 760,
             maxHeight: isEmbedded ? .infinity : 760
         )
-        .background(isCompactDesktopPane ? MemoryTheme.card : MemoryTheme.background)
-        .overlay { macPickerOverlay }
-        .animation(.easeInOut(duration: 0.16), value: isCalendarPresented)
-        .animation(.easeInOut(duration: 0.16), value: isTimePickerPresented)
+        .background(MemoryTheme.background)
         .confirmationDialog(
             "Удалить запись?",
             isPresented: $isDeleteConfirmationPresented,
@@ -659,75 +396,20 @@ struct ItemEditorView: View {
         }
     }
 
-    @ViewBuilder
-    private var macPickerOverlay: some View {
-        if isCalendarPresented || isTimePickerPresented {
-            ZStack {
-                Color.black.opacity(0.34)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        isCalendarPresented = false
-                        isTimePickerPresented = false
-                    }
-
-                if isCalendarPresented {
-                    MemoryCalendarPicker(
-                        selection: macPickerSelection,
-                        isPresented: $isCalendarPresented
-                    )
-                    .transition(.scale(scale: 0.96).combined(with: .opacity))
-                } else {
-                    MemoryTimePicker(
-                        selection: macPickerSelection,
-                        isPresented: $isTimePickerPresented
-                    )
-                    .transition(.scale(scale: 0.96).combined(with: .opacity))
-                }
-            }
-        }
-    }
-
     private var macHeader: some View {
-        HStack(spacing: 14) {
-            if isEmbedded {
-                Button(action: cancelEditing) {
-                    Image(systemName: "arrow.left")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 40, height: 40)
-                        .background(Color.primary.opacity(0.055))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Назад")
-                .accessibilityLabel("Назад")
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(MemoryTheme.accent.opacity(0.14))
-                        .frame(width: 48, height: 48)
-
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(MemoryTheme.accent)
-                }
+        HStack {
+            Button(action: cancelEditing) {
+                Image(systemName: "arrow.left").font(.system(size: 17))
+                    .frame(width: 44, height: 44)
+                    .background(MemoryTheme.card, in: Circle())
             }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(isEmbedded ? entryKind.title : (isNew ? "Новая запись" : "Редактировать запись"))
-                    .font(.title3.weight(.semibold))
-
-                if !isEmbedded {
-                    Text("Настройте запись, описание, дату и уведомление")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
+            .buttonStyle(.plain).accessibilityLabel("Назад")
             Spacer()
+            Text(isNew ? "Новая запись" : entryKind.title).font(.system(size: 14)).foregroundStyle(.secondary)
+            Spacer()
+            Color.clear.frame(width: 44, height: 44)
         }
-        .padding(.horizontal, isCompactDesktopPane ? 18 : 24)
-        .padding(.vertical, isCompactDesktopPane ? 15 : 20)
+        .padding(.horizontal, 24).padding(.vertical, 12)
     }
 
     private var macPrimaryContent: some View {
@@ -736,7 +418,7 @@ struct ItemEditorView: View {
                 .textFieldStyle(.plain)
                 .font(
                     .system(
-                        size: isCompactDesktopPane ? 23 : 26,
+                        size: isCompactDesktopPane ? 28 : 34,
                         weight: .medium,
                         design: .rounded
                     )
@@ -746,9 +428,7 @@ struct ItemEditorView: View {
                 .accessibilityIdentifier("recordEditorTitle")
 
             if isDescriptionPresented {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 8) {
                     Text("Описание")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -784,257 +464,172 @@ struct ItemEditorView: View {
         entryChips
     }
 
-    private var macScheduleCard: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(entryKind == .event ? "Период" : "Дата и время")
-                    .font(.body.weight(.medium))
-                Spacer()
-                if entryKind == .reminder || !hasSchedule {
-                    schedulePresenceButton
-                }
-            }
-            .padding(.bottom, hasSchedule ? 14 : 0)
+    private var macScheduleCard: some View { scheduleCard }
 
-            if hasSchedule {
-                Divider()
-                macScheduleValueRow(
-                    title: "Дата",
-                    startValue: MemoryDateFormatting.editorDate(scheduledDate),
-                    startTarget: .startDate,
-                    endValue: MemoryDateFormatting.editorDate(eventEndDate),
-                    endTarget: .endDate
-                )
-
-                Divider()
-
-                macScheduleValueRow(
-                    title: "Время",
-                    startValue: MemoryDateFormatting.time(scheduledDate),
-                    startTarget: .startTime,
-                    endValue: MemoryDateFormatting.time(eventEndDate),
-                    endTarget: .endTime
-                )
-
-                if !eventRangeIsValid {
-                    Text("Окончание должно быть позже начала")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 8)
-                }
-            }
-        }
-        .padding(18)
-        .memoryCard()
-        .animation(.easeInOut(duration: 0.18), value: hasSchedule)
-        .animation(.easeInOut(duration: 0.18), value: hasEventEnd)
-        .onChange(of: hasSchedule) { _, isScheduled in
-            if !isScheduled { reminderOffsets.removeAll() }
-        }
-        .onChange(of: scheduledDate) { oldValue, newValue in
-            guard entryKind == .event, hasEventEnd, eventEndDate <= newValue else { return }
-            let previousDuration = max(eventEndDate.timeIntervalSince(oldValue), 3_600)
-            eventEndDate = newValue.addingTimeInterval(previousDuration)
-        }
-    }
-
-    private func macScheduleValueRow(
-        title: String,
-        startValue: String,
-        startTarget: SchedulePickerTarget,
-        endValue: String,
-        endTarget: SchedulePickerTarget
-    ) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                scheduleRowTitle(title)
-                Spacer(minLength: 12)
-                macScheduleValueButton(startValue, target: startTarget)
-                if entryKind == .event {
-                    macScheduleEndControls(endValue: endValue, endTarget: endTarget)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    scheduleRowTitle(title)
-                    Spacer(minLength: 12)
-                    macScheduleValueButton(startValue, target: startTarget)
-                }
-                if entryKind == .event {
-                    HStack(spacing: 8) {
-                        Spacer(minLength: 0)
-                        macScheduleEndControls(endValue: endValue, endTarget: endTarget)
-                    }
-                }
-            }
-        }
-        .frame(minHeight: 46)
-    }
-
-    @ViewBuilder
-    private func macScheduleEndControls(
-        endValue: String,
-        endTarget: SchedulePickerTarget
-    ) -> some View {
-        if hasEventEnd {
-            Text("—").foregroundStyle(.tertiary)
-            macScheduleValueButton(endValue, target: endTarget)
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) { hasEventEnd = false }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 30, height: 30)
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(Circle())
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Убрать окончание")
-        } else {
-            Button {
-                addMacEventEnd(opening: endTarget)
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(MemoryTheme.accent)
-                    .frame(width: 30, height: 30)
-                    .background(MemoryTheme.accent.opacity(0.1))
-                    .clipShape(Circle())
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Добавить окончание")
-        }
-    }
-
-    private func macScheduleValueButton(
-        _ value: String,
-        target: SchedulePickerTarget
-    ) -> some View {
-        MemoryScheduleValueChip(value: value) {
-            macPickerTarget = target
-            isCalendarPresented = target.editsDate
-            isTimePickerPresented = !target.editsDate
-        }
-    }
-
-    private func addMacEventEnd(opening target: SchedulePickerTarget) {
-        eventEndDate = max(eventEndDate, scheduledDate.addingTimeInterval(3_600))
-        hasEventEnd = true
-        macPickerTarget = target
-        isCalendarPresented = target.editsDate
-        isTimePickerPresented = !target.editsDate
-    }
-
-    private var macPickerSelection: Binding<Date> {
-        Binding(
-            get: { macPickerTarget.editsEnd ? eventEndDate : scheduledDate },
-            set: { value in
-                if macPickerTarget.editsEnd {
-                    eventEndDate = max(value, scheduledDate.addingTimeInterval(60))
-                } else {
-                    scheduledDate = value
-                }
-            }
-        )
-    }
-
-    private var macNotificationCard: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(MemoryTheme.accent.opacity(0.13))
-                        .frame(width: 34, height: 34)
-
-                    Image(systemName: notificationsEnabled ? "bell.fill" : "bell.slash")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(applicationNotificationsEnabled ? MemoryTheme.accent : .secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Уведомления")
-                        .font(.body.weight(.medium))
-                    Text(notificationSummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Toggle("", isOn: notificationsEnabledBinding)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .disabled(!hasSchedule || !applicationNotificationsEnabled)
-            }
-
-            if hasSchedule && notificationsEnabled {
-                Divider()
-                reminderSelectionList
-                    .disabled(!applicationNotificationsEnabled)
-                    .opacity(applicationNotificationsEnabled ? 1 : 0.46)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .padding(18)
-        .memoryCard()
-        .animation(.easeInOut(duration: 0.18), value: notificationsEnabled)
-    }
+    private var macNotificationCard: some View { notificationCard }
 
     private var macFooter: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             if !isNew {
-                Button(role: .destructive) {
-                    isDeleteConfirmationPresented = true
-                } label: {
-                    Label("Удалить", systemImage: "trash")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.red)
+                Button(role: .destructive) { isDeleteConfirmationPresented = true } label: {
+                    Image(systemName: "trash").frame(width: 44, height: 44)
+                        .background(MemoryTheme.card, in: Circle())
+                }.buttonStyle(.plain).accessibilityLabel("Удалить запись")
             }
-
+            Spacer(minLength: 0)
             if !isNew && entryKind == .reminder {
                 Button(action: saveToggleAndDismiss) {
-                    Label(
-                        item.isCompleted ? "Вернуть" : "Выполнено",
-                        systemImage: item.isCompleted ? "arrow.uturn.backward" : "checkmark.circle"
-                    )
+                    Label(item.isCompleted ? "Вернуть" : "Выполнено", systemImage: "checkmark")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(MemoryTheme.accent)
-                .disabled(trimmedTitle.isEmpty)
+                .buttonStyle(MemoryActionStyle(prominent: true)).disabled(!canSave)
             }
-
-            Spacer()
-
-            Button("Отмена") {
-                cancelEditing()
+            if isNew {
+                Button("Отмена", action: cancelEditing).buttonStyle(MemoryActionStyle())
+                Button(saveActionTitle ?? "Создать", action: saveAndDismiss)
+                    .buttonStyle(MemoryActionStyle(prominent: true))
+                    .keyboardShortcut(.defaultAction).disabled(!canSave)
             }
-            .keyboardShortcut(.cancelAction)
-
-            Button(saveActionTitle ?? "Сохранить") {
-                saveAndDismiss()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(MemoryTheme.accent)
-            .keyboardShortcut(.defaultAction)
-            .disabled(!canSave)
         }
-        .padding(.horizontal, isCompactDesktopPane ? 18 : 24)
-        .padding(.vertical, isCompactDesktopPane ? 14 : 18)
+        .padding(.horizontal, 24).padding(.vertical, 18)
     }
+
 #endif
 
-    private func scheduleRowTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.subheadline.weight(.medium))
-            .foregroundStyle(.secondary)
+
+    private var scheduleCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Когда").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    if hasSchedule { hasSchedule = false; reminderOffsets.removeAll() }
+                    else {
+                        hasSchedule = true
+                        if reminderOffsets.isEmpty { reminderOffsets.insert(account.defaultReminderMinutes) }
+                        activeSchedulePicker = .startDate
+                    }
+                } label: {
+                    Image(systemName: hasSchedule ? "xmark" : "plus")
+                        .font(.system(size: 12, weight: .medium)).frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(hasSchedule ? "Убрать дату и время" : "Добавить дату и время")
+            }
+            if hasSchedule {
+                scheduleRow(title: "Дата", start: .startDate, end: .endDate)
+                scheduleRow(title: "Время", start: .startTime, end: .endTime)
+            } else {
+                Button("Без срока") {
+                    hasSchedule = true
+                    if reminderOffsets.isEmpty { reminderOffsets.insert(account.defaultReminderMinutes) }
+                    activeSchedulePicker = .startDate
+                }
+                .font(.system(size: 23)).frame(minHeight: 44).buttonStyle(.plain)
+                .modifier(MemorySchedulePopover(target: .startDate, active: $activeSchedulePicker,
+                                                selection: scheduleBinding(.startDate), minimumDate: nil))
+            }
+            if !eventRangeIsValid {
+                Text("Окончание должно быть позже начала").font(.caption).foregroundStyle(MemoryTheme.danger)
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 10)
+        .memoryCard()
+        .animation(reduceMotion ? nil : MemoryTheme.motion, value: hasSchedule)
+        .animation(reduceMotion ? nil : MemoryTheme.motion, value: hasEventEnd)
+        .onChange(of: scheduledDate) { old, new in
+            guard entryKind == .event, hasEventEnd, eventEndDate <= new else { return }
+            eventEndDate = new.addingTimeInterval(max(60, eventEndDate.timeIntervalSince(old)))
+        }
+    }
+
+    private func scheduleRow(title: String, start: SchedulePickerTarget, end: SchedulePickerTarget) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                Text(title).font(.system(size: 14)).foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+                scheduleValue(start)
+                endControls(end)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    scheduleValue(start)
+                    Spacer(minLength: 0)
+                    endControls(end)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func scheduleValue(_ target: SchedulePickerTarget) -> some View {
+        let date = target.editsEnd ? eventEndDate : scheduledDate
+        return Button {
+            activeSchedulePicker = target
+        } label: {
+            Text(target.editsDate ? MemoryDateFormatting.editorDate(date) : MemoryDateFormatting.time(date))
+                .font(.system(size: target.editsDate ? 22 : 28, weight: .regular))
+                .monospacedDigit().fixedSize().frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(target.editsEnd ? "Окончание" : "Начало"), \(target.editsDate ? "дата" : "время")")
+        .modifier(MemorySchedulePopover(target: target, active: $activeSchedulePicker,
+                                        selection: scheduleBinding(target),
+                                        minimumDate: target.editsEnd ? scheduledDate : nil))
+    }
+
+    @ViewBuilder private func endControls(_ target: SchedulePickerTarget) -> some View {
+        if entryKind == .event {
+            if hasEventEnd {
+                Text("до").font(.caption).foregroundStyle(.secondary)
+                scheduleValue(target)
+                Button { hasEventEnd = false } label: {
+                    Image(systemName: "xmark").font(.system(size: 11)).frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain).accessibilityLabel("Убрать окончание")
+            } else {
+                Button {
+                    eventEndDate = max(eventEndDate, scheduledDate.addingTimeInterval(3600))
+                    hasEventEnd = true; activeSchedulePicker = target
+                } label: {
+                    Image(systemName: "plus").font(.system(size: 14)).frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain).accessibilityLabel("Добавить окончание")
+            }
+        }
+    }
+
+    private func scheduleBinding(_ target: SchedulePickerTarget) -> Binding<Date> {
+        Binding(get: { target.editsEnd ? eventEndDate : scheduledDate }, set: { value in
+            if target.editsEnd { eventEndDate = max(value, scheduledDate.addingTimeInterval(60)) }
+            else { scheduledDate = value }
+        })
+    }
+
+    private var notificationCard: some View {
+        Button { showsNotifications = true } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "bell").font(.system(size: 16))
+                Text("Напомнить").font(.system(size: 14))
+                Spacer(minLength: 10)
+                Text(notificationsEnabled ? ReminderLeadTime.summary(Array(reminderOffsets)) : "Не напоминать")
+                    .font(.system(size: 14, weight: .medium)).multilineTextAlignment(.trailing)
+                Image(systemName: "chevron.down").font(.system(size: 11))
+            }
+            .padding(18).frame(minHeight: 60).memoryCard()
+        }
+        .buttonStyle(.plain)
+        .disabled(!hasSchedule || !applicationNotificationsEnabled)
+        .popover(isPresented: $showsNotifications) {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Уведомления", isOn: notificationsEnabledBinding).toggleStyle(.switch)
+                if notificationsEnabled { reminderSelectionList }
+            }
+            .padding(18).frame(width: 310)
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(MemoryTheme.card)
+            .accessibilityAction(.escape) { showsNotifications = false }
+        }
     }
 
     private var entryKindToggle: some View {
@@ -1045,38 +640,6 @@ struct ItemEditorView: View {
                 normalizeSchedule(for: nextKind)
             }
         }
-    }
-
-    private var schedulePresenceButton: some View {
-        Button {
-            if hasSchedule {
-                withAnimation(.easeInOut(duration: 0.18)) { hasSchedule = false }
-            } else {
-                withAnimation(.easeInOut(duration: 0.18)) { hasSchedule = true }
-                if reminderOffsets.isEmpty {
-                    reminderOffsets.insert(account.defaultReminderMinutes)
-                }
-#if os(iOS)
-                mobileSchedulePicker = .startDate
-#else
-                macPickerTarget = .startDate
-                isCalendarPresented = true
-#endif
-            }
-        } label: {
-            Image(systemName: hasSchedule ? "xmark" : "plus")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(hasSchedule ? Color.secondary : MemoryTheme.accent)
-                .frame(width: 30, height: 30)
-                .background(
-                    hasSchedule ? Color.secondary.opacity(0.08) : MemoryTheme.accent.opacity(0.1)
-                )
-                .clipShape(Circle())
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(hasSchedule ? "Убрать дату и время" : "Добавить дату и время")
     }
 
     private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1122,7 +685,7 @@ struct ItemEditorView: View {
                         HStack(spacing: 9) {
                             Image(systemName: "bell")
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(MemoryTheme.accent)
+                                .foregroundStyle(.primary)
 
                             Text(reminderTitle(for: offset))
                                 .lineLimit(1)
@@ -1183,7 +746,7 @@ struct ItemEditorView: View {
                 } label: {
                     Label("Добавить уведомление", systemImage: "plus")
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(MemoryTheme.accent)
+                        .foregroundStyle(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 5)
                 }
@@ -1225,37 +788,6 @@ struct ItemEditorView: View {
         }
     }
 
-    private var scheduleSummary: String {
-        if entryKind == .event {
-#if os(macOS)
-            let start = MemoryDateFormatting.time(scheduledDate)
-            guard hasEventEnd else { return "\(macDateLabel) · \(start)" }
-            return "\(macDateLabel) · \(start)–\(MemoryDateFormatting.time(eventEndDate))"
-#else
-            let start = MemoryDateFormatting.shortDateTime(scheduledDate)
-            guard hasEventEnd else { return start }
-            return "\(start)–\(MemoryDateFormatting.time(eventEndDate))"
-#endif
-        }
-#if os(macOS)
-        return "\(macDateLabel) · \(MemoryDateFormatting.time(scheduledDate))"
-#else
-        return MemoryDateFormatting.shortDateTime(scheduledDate)
-#endif
-    }
-
-#if os(macOS)
-    private var macDateLabel: String {
-        MemoryDateFormatting.editorDate(scheduledDate)
-    }
-#endif
-
-    private var notificationSummary: String {
-        guard hasSchedule else { return "Сначала добавьте дату и время" }
-        guard notificationsEnabled else { return "Задача останется в плане без сигнала" }
-        return ReminderLeadTime.summary(Array(reminderOffsets))
-    }
-
     private func saveAndDismiss() {
         guard persistChanges() else { isSaveErrorPresented = true; return }
         closeEditor()
@@ -1284,8 +816,8 @@ struct ItemEditorView: View {
                 .recordLinksPopup(item: linksItem ?? item, isPresented: $showsLinks) { linked in
                     pendingLinkedRecord = linked
                     showsLinks = false
-                    if hasUnsavedChanges { isLinksConfirmationPresented = true }
-                    else { openPendingLinkedRecord() }
+                    if !hasUnsavedChanges || persistChanges() { openPendingLinkedRecord() }
+                    else { isSaveErrorPresented = true }
                 }
             }
         }
@@ -1298,7 +830,8 @@ struct ItemEditorView: View {
     }
 
     private func persistChanges() -> Bool {
-        onSave(
+        guard canSave else { return false }
+        return onSave(
             trimmedTitle,
             Item.normalizedDetails(trimmedDetails),
             entryKind,
@@ -1309,8 +842,11 @@ struct ItemEditorView: View {
     }
 
     private func cancelEditing() {
-        if hasUnsavedChanges {
+        if isNew && hasUnsavedChanges {
             isDiscardConfirmationPresented = true
+        } else if hasUnsavedChanges {
+            guard canSave, persistChanges() else { isSaveErrorPresented = true; return }
+            closeEditor()
         } else {
             closeEditor()
         }

@@ -12,6 +12,36 @@ import AppKit
 
 final class MemoryUITests: XCTestCase {
 
+    @MainActor func testFlowContextPanelsKeepEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-links"]
+        app.launch()
+        ensureWindow(app)
+        let title = app.textFields["recordEditorTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons.matching(identifier: "Назад").count, 1)
+        app.buttons["Начало, дата"].tap()
+        XCTAssertFalse(app.buttons["Готово"].exists)
+#if os(macOS)
+        app.typeKey(.escape, modifierFlags: [])
+#else
+        title.tap()
+#endif
+        XCTAssertTrue(title.exists)
+        app.buttons["openRecordLinks"].tap()
+        XCTAssertTrue(app.buttons["addRecordLink"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Закрыть связи"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Flow contextual links"; screenshot.lifetime = .keepAlways; add(screenshot)
+#if os(macOS)
+        app.typeKey(.escape, modifierFlags: [])
+#else
+        title.tap()
+#endif
+        XCTAssertTrue(title.exists)
+        XCTAssertEqual(app.buttons.matching(identifier: "Назад").count, 1)
+    }
+
 #if os(macOS)
     @MainActor private func pasteTestTitle(_ text: String, into field: XCUIElement) {
         let board = NSPasteboard.general
@@ -86,18 +116,18 @@ final class MemoryUITests: XCTestCase {
         app.buttons["Исключить из связи: Вебинар по дизайну"].tap()
         XCTAssertTrue(materials.waitForExistence(timeout: 5))
         XCTAssertFalse(webinar.exists)
-        app.buttons["Разорвать связь"].tap()
-        XCTAssertFalse(app.buttons["Закрыть связи"].waitForExistence(timeout: 1))
+        app.buttons["Разорвать"].tap()
+        XCTAssertFalse(app.buttons["addRecordLink"].waitForExistence(timeout: 1))
         app.buttons["openRecordLinks"].tap()
         app.buttons["addRecordLink"].tap()
         XCTAssertTrue(materials.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Отправить заявку")).firstMatch.exists)
-        app.buttons["Закрыть связи"].tap()
+        dismissLinkPopup(app)
         let title = app.textFields["recordEditorTitle"]
         title.tap()
         title.typeText(" — черновик")
         app.buttons["openRecordLinks"].tap()
-        app.buttons["Закрыть связи"].tap()
+        dismissLinkPopup(app)
         XCTAssertTrue((title.value as? String)?.contains("черновик") == true)
     }
 
@@ -115,7 +145,7 @@ final class MemoryUITests: XCTestCase {
 #else
         title.typeText(" — Сохранить мой черновик")
 #endif
-        let save = app.buttons["Сохранить"]
+        let save = app.buttons["Назад"]
         save.tap()
         XCTAssertTrue(app.staticTexts["Не удалось сохранить"].waitForExistence(timeout: 5))
 #if os(macOS)
@@ -128,11 +158,19 @@ final class MemoryUITests: XCTestCase {
         XCTAssertEqual(app.buttons.matching(identifier: "Назад").count, 1)
     }
 
+    @MainActor private func dismissLinkPopup(_ app: XCUIApplication) {
+#if os(macOS)
+        app.typeKey(.escape, modifierFlags: [])
+#else
+        app.textFields["recordEditorTitle"].tap()
+#endif
+    }
+
     @MainActor private func ensureWindow(_ app: XCUIApplication) {
 #if os(macOS)
         if !app.windows.firstMatch.waitForExistence(timeout: 2) {
-            app.menuBars.menuBarItems["File"].click()
-            app.menuBars.menuItems["New Window"].click()
+            app.typeKey("n", modifierFlags: .command)
+            XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
         }
 #endif
     }
@@ -175,7 +213,6 @@ final class MemoryUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["2 записи"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["Требует внимания"].exists)
-        XCTAssertFalse(app.staticTexts["Сегодня"].exists)
         let listScreenshot = XCTAttachment(screenshot: app.screenshot())
         listScreenshot.name = "Compact voice review"
         listScreenshot.lifetime = .keepAlways
@@ -184,13 +221,13 @@ final class MemoryUITests: XCTestCase {
         let links = app.buttons["Связанные записи: 2"].firstMatch
         XCTAssertTrue(links.exists)
         links.tap()
-        XCTAssertTrue(app.buttons["Закрыть связи"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["addRecordLink"].waitForExistence(timeout: 5))
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Сходить за покупками")).firstMatch.tap()
         XCTAssertTrue(app.buttons["openRecordLinks"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(identifier: "Назад").count, 1)
         app.buttons["openRecordLinks"].tap()
-        app.buttons["Разорвать связь"].tap()
-        XCTAssertFalse(app.buttons["Закрыть связи"].waitForExistence(timeout: 1))
+        app.buttons["Разорвать"].tap()
+        XCTAssertFalse(app.buttons["addRecordLink"].waitForExistence(timeout: 1))
         app.buttons["Назад"].tap()
         XCTAssertTrue(app.staticTexts["2 записи"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Связанные записи: 2"].exists)
