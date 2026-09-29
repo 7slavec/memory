@@ -2,7 +2,8 @@ import SwiftUI
 
 extension View {
     func recordLinksPopup(item: Item, isPresented: Binding<Bool>, onOpen: @escaping (Item) -> Void) -> some View {
-        popover(isPresented: isPresented) {
+        overlayPreferenceValue(MemoryLinkControlAnchor.self) { anchor in
+            MemoryAnchoredPopover(isPresented: isPresented, source: anchor) {
             RecordLinksPopupContent(item: item, onOpen: onOpen)
 #if os(macOS)
                 .frame(width: 360)
@@ -11,6 +12,7 @@ extension View {
                 .presentationCompactAdaptation(.popover)
                 .presentationBackground(MemoryTheme.card)
 #endif
+            }
         }
     }
 }

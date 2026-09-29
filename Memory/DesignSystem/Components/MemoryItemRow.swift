@@ -33,6 +33,7 @@ struct MemoryItemRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("recordLinksBadge")
+                .anchorPreference(key: MemoryLinkControlAnchor.self, value: .bounds) { $0 }
             }
         }
         .padding(18)
@@ -43,7 +44,7 @@ struct MemoryItemRow: View {
         .overlay {
             if isOverdue {
                 RoundedRectangle(cornerRadius: MemoryTheme.cardRadius)
-                    .stroke(MemoryTheme.danger.opacity(0.45), lineWidth: 1)
+                    .strokeBorder(MemoryTheme.danger.opacity(0.45), lineWidth: 1)
                     .allowsHitTesting(false)
             }
         }

@@ -760,26 +760,11 @@ struct ContentView: View {
         allowsCapture: Bool = true,
         content: AnyView
     ) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack {
-                    desktopPageHeader(title: title, caption: nil)
-                    if allowsCapture {
-                        Button { withAnimation(MemoryTheme.motion) { isDesktopComposerPresented = true } } label: {
-                            Label("Новая запись", systemImage: "plus")
-                        }
-                        .buttonStyle(MemoryActionStyle(prominent: true))
-                    }
-                }
-                search
-                content
-            }
-            .frame(maxWidth: 820, alignment: .leading)
-            .padding(.horizontal, 30)
-            .padding(.top, 26)
-            .padding(.bottom, allowsCapture ? 130 : 40)
-            .frame(maxWidth: .infinity)
-        }
+        DesktopRecordsPage(allowsCapture: allowsCapture, onCreate: {
+            withAnimation(MemoryTheme.motion) { isDesktopComposerPresented = true }
+        }, heading: {
+            desktopPageHeader(title: title, caption: nil)
+        }, search: { search }, records: { content })
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if allowsCapture {
                 desktopRecordsCaptureControl
@@ -1217,19 +1202,20 @@ struct ContentView: View {
                     .accessibilityHint("Открывает напоминания без срока")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-
+                .padding(.horizontal, 22)
                 Section {
                     activeItemsListContent
                         .padding(.top, 2)
+                        .padding(.horizontal, 22)
                 } header: {
                     searchField
+                        .padding(.horizontal, 22)
                         .padding(.vertical, 8)
                         .background(MemoryTheme.background)
                         .zIndex(5)
                 }
             }
-            .frame(maxWidth: 760)
-            .padding(.horizontal, 22)
+            .frame(maxWidth: 804)
             .padding(.top, 20)
             .padding(.bottom, 104)
             .frame(maxWidth: .infinity)

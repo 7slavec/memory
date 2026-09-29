@@ -569,7 +569,7 @@ struct ItemEditorView: View {
             activeSchedulePicker = target
         } label: {
             Text(target.editsDate ? MemoryDateFormatting.editorDate(date) : MemoryDateFormatting.time(date))
-                .font(.system(size: target.editsDate ? 20 : 26, weight: .regular))
+                .font(.system(size: 20, weight: .regular))
                 .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75).frame(minHeight: 44)
         }
         .buttonStyle(.plain)

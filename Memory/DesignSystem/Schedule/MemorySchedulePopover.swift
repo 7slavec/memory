@@ -12,7 +12,14 @@ struct MemorySchedulePopover: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content.popover(isPresented: presented, arrowEdge: .bottom) {
+        content.overlayPreferenceValue(ScheduleFieldAnchors.self) { anchors in
+            MemoryAnchoredPopover(isPresented: presented, source: active.flatMap { anchors[$0] }) {
+                panel
+            }
+        }
+    }
+
+    private var panel: some View {
             Group {
                 if let target = active {
                     Group {
@@ -30,6 +37,5 @@ struct MemorySchedulePopover: ViewModifier {
             .presentationBackground(MemoryTheme.card)
             .accessibilityAction(.escape) { active = nil }
             .accessibilityIdentifier("schedulePanel")
-        }
     }
 }
