@@ -179,16 +179,11 @@ struct QuickCaptureCard: View {
             }
 #else
             if isHome {
-                ZStack {
-                    if isRecordsPage {
-                        Color.clear
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .allowsHitTesting(false)
-                    } else {
-                        homeBody
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
-                }
+                homeBody
+                    .opacity(isRecordsPage ? 0 : 1)
+                    .offset(x: isRecordsPage && !reduceMotion ? 24 : 0)
+                    .allowsHitTesting(!isRecordsPage)
+                    .accessibilityHidden(isRecordsPage)
             } else {
                 compactBody
             }
@@ -293,9 +288,7 @@ struct QuickCaptureCard: View {
         }
         .onChange(of: isRecordsPage) { _, recordsPage in
             focusedField = nil
-            withAnimation(.easeOut(duration: 0.16)) {
-                isRecordsComposerPresented = false
-            }
+            isRecordsComposerPresented = false
             if recordsPage && voiceInput.isListening {
                 shouldSubmitVoiceWhenStopped = false
                 voiceInput.stop()

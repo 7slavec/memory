@@ -9,7 +9,7 @@ struct RecordLinksView: View {
     @Query private var links: [RecordLink]
     let item: Item
     let onOpen: (Item) -> Void
-    @State private var isChoosing = false
+    @State private var isAdding = false
     @State private var search = ""
     @State private var errorMessage: String?
     @State private var anchorID: UUID
@@ -23,6 +23,7 @@ struct RecordLinksView: View {
     private var groupIDs: Set<UUID> {
         RecordLinkIndex(items: items, links: links, ownerID: account.userID).memberIDs(for: anchorID)
     }
+    private var isChoosing: Bool { isAdding || groupIDs.count <= 1 }
     private var visibleItems: [Item] {
         items.filter { $0.ownerID == account.userID && $0.deletedAt == nil }
     }
@@ -90,7 +91,7 @@ struct RecordLinksView: View {
                                             .allowsHitTesting(false)
                                     }
                                 }
-                                .accessibilityHint(other.id == item.id ? "Текущая запись" : "Открыть запись")
+                                .accessibilityHint(isChoosing ? "Связать с текущей записью" : other.id == item.id ? "Текущая запись" : "Открыть запись")
                                 if !isChoosing && groupIDs.count > 1 {
                                     Button { remove(other) } label: {
                                         Image(systemName: "xmark")
@@ -112,10 +113,7 @@ struct RecordLinksView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { linkActions }
-                VStack(spacing: 8) { linkActions }
-            }
+            HStack(spacing: 8) { linkActions }
             .padding(.horizontal, 14).padding(.bottom, 14)
 
         }
@@ -132,16 +130,25 @@ struct RecordLinksView: View {
 
     @ViewBuilder private var linkActions: some View {
         if isChoosing {
-            Button { isChoosing = false; search = "" } label: {
-                Label("Назад", systemImage: "arrow.left")
-            }.buttonStyle(MemoryActionStyle())
+            Button {
+                if groupIDs.count > 1 { isAdding = false; search = "" }
+                else { dismiss() }
+            } label: {
+                Image(systemName: "arrow.left").font(.system(size: 16, weight: .medium))
+                    .frame(width: 44, height: 44)
+                    .background(MemoryTheme.raised, in: Circle())
+            }
+            .buttonStyle(.plain).accessibilityLabel("Отменить выбор связи")
+            Spacer(minLength: 0)
         } else {
             if groupIDs.count > 1 {
-                Button("Разорвать", role: .destructive, action: dissolve)
+                Button(role: .destructive, action: dissolve) {
+                    Text("Разорвать").frame(maxWidth: .infinity)
+                }
                     .buttonStyle(MemoryActionStyle())
             }
-            Button { isChoosing = true } label: {
-                Label("Добавить", systemImage: "plus")
+            Button { isAdding = true } label: {
+                Label("Добавить", systemImage: "plus").frame(maxWidth: .infinity)
             }
             .buttonStyle(MemoryActionStyle(prominent: true))
             .accessibilityLabel("Связать запись").accessibilityIdentifier("addRecordLink")
@@ -152,7 +159,7 @@ struct RecordLinksView: View {
         guard let anchor = visibleItems.first(where: { $0.id == anchorID }) else { return }
         do {
             try RecordGroupService.add(other, to: anchor, ownerID: account.userID, context: modelContext)
-            isChoosing = false; search = ""
+            isAdding = false; search = ""
             account.markLocalChange(modelContext: modelContext)
         } catch { errorMessage = error.localizedDescription }
     }

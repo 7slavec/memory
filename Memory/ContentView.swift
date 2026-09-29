@@ -189,7 +189,6 @@ struct ContentView: View {
     @AppStorage(AppAppearance.storageKey)
     private var appAppearance: AppAppearance = .system
     @State private var isKeyboardVisible = false
-    @State private var hasTriggeredPageSwipe = false
     @State private var isMobileProfilePresented = false
     @State private var isMobileArchivePresented = false
     @State private var isVoiceLabPresented = false
@@ -993,11 +992,12 @@ struct ContentView: View {
                             )
                             .zIndex(2)
 
-                            if selectedSection == .all {
-                                mobileRecordsContent
-                                    .transition(.move(edge: .leading).combined(with: .opacity))
-                                    .zIndex(1)
-                            }
+                            mobileRecordsContent
+                                .opacity(selectedSection == .all ? 1 : 0)
+                                .offset(x: selectedSection == .all || reduceMotion ? 0 : -24)
+                                .allowsHitTesting(selectedSection == .all)
+                                .accessibilityHidden(selectedSection != .all)
+                                .zIndex(1)
                         }
                         .overlay(alignment: .top) {
                             if let item = recentlyAddedItem {
@@ -1092,8 +1092,11 @@ struct ContentView: View {
                                 }
                                 .transition(.scale(scale: 0.78).combined(with: .opacity))
                         } else {
-                            GlassVoiceOrb(isListening: false, isProcessing: false, isPulsing: false, size: 34)
+                            Image(systemName: "waveform")
+                                .font(.system(size: 19, weight: .medium))
+                                .foregroundStyle(.primary)
                                 .frame(width: 52, height: 52)
+                                .background(MemoryTheme.card)
                                 .clipShape(Circle())
                                 .contentShape(Circle())
                                 .transition(.scale(scale: 0.78).combined(with: .opacity))
@@ -1740,28 +1743,21 @@ struct ContentView: View {
     }
 
     private var responsiveMobilePageSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 8)
+        DragGesture(minimumDistance: 18)
             .onChanged { value in
-                guard !isKeyboardVisible, !isMobileProfilePresented, !isInboxPresented else { return }
+                guard !isKeyboardVisible, !isMobileProfilePresented, !isInboxPresented,
+                      editingItem == nil, draftEditingItem == nil, linkPopupItemID == nil else { return }
                 let horizontal = value.translation.width
                 let vertical = value.translation.height
                 guard abs(horizontal) > abs(vertical) * 1.2 else { return }
 
-                if abs(horizontal) > 8 {
+                if abs(horizontal) > 18, !suppressItemOpening {
                     suppressItemOpening = true
-                }
-
-                guard !hasTriggeredPageSwipe, abs(horizontal) > 26 else { return }
-                if selectedSection == .now, horizontal > 0 {
-                    hasTriggeredPageSwipe = true
-                    navigateMobile(to: .all)
-                } else if selectedSection == .all, horizontal < 0 {
-                    hasTriggeredPageSwipe = true
-                    navigateMobile(to: .now)
                 }
             }
             .onEnded { value in
-                guard !isKeyboardVisible, !isMobileProfilePresented, !isInboxPresented else {
+                guard !isKeyboardVisible, !isMobileProfilePresented, !isInboxPresented,
+                      editingItem == nil, draftEditingItem == nil, linkPopupItemID == nil else {
                     resetResponsiveSwipeState()
                     return
                 }
@@ -1770,7 +1766,7 @@ struct ContentView: View {
                 let vertical = value.translation.height
                 let predicted = value.predictedEndTranslation.width
 
-                if !hasTriggeredPageSwipe,
+                if abs(horizontal) > 26,
                    abs(horizontal) > abs(vertical) * 1.2,
                    abs(predicted) > 52 {
                     suppressItemOpening = true
@@ -1812,7 +1808,6 @@ struct ContentView: View {
     }
 
     private func resetResponsiveSwipeState() {
-        hasTriggeredPageSwipe = false
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(160))
             suppressItemOpening = false
@@ -1825,7 +1820,7 @@ struct ContentView: View {
         requestVoiceReviewExit {
             dismissAppKeyboard()
             isInboxPresented = false
-            withAnimation(.easeOut(duration: 0.16)) {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.24, extraBounce: 0)) {
                 selectedSection = section
             }
         }
@@ -2240,7 +2235,6 @@ struct ContentView: View {
 
     private func taskRows(_ source: [Item]) -> some View {
         let index = RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID)
-        let nextID = activeItems.first { ($0.dueDate ?? .distantPast) >= currentDate }?.id
         return LazyVStack(spacing: 12) {
             ForEach(source, id: \.persistentModelID) { item in
                 MemoryItemRow(
@@ -2255,8 +2249,7 @@ struct ContentView: View {
                     onOpenLinks: {
                         guard !suppressItemOpening else { return }
                         linkPopupItemID = item.id
-                    },
-                    isPriority: item.id == nextID
+                    }
                 )
                 .recordLinksPopup(item: item, isPresented: Binding(
                     get: { linkPopupItemID == item.id },

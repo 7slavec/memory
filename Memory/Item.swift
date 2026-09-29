@@ -9,6 +9,13 @@ import Foundation
 import SwiftData
 
 enum MemoryDateFormatting {
+    // Immutable after construction. NSCache is bounded and thread-safe; the time
+    // zone is part of the key so travelling/settings changes cannot reuse old output.
+    private static let formatters: NSCache<NSString, DateFormatter> = {
+        let cache = NSCache<NSString, DateFormatter>()
+        cache.countLimit = 24
+        return cache
+    }()
     static func shortDate(_ date: Date) -> String {
         formatter("d MMM").string(from: date)
     }
@@ -33,10 +40,15 @@ enum MemoryDateFormatting {
     }
 
     private static func formatter(_ format: String) -> DateFormatter {
+        let timeZone = TimeZone.current
+        let key = "\(format)|\(timeZone.identifier)" as NSString
+        if let cached = formatters.object(forKey: key) { return cached }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ru_RU")
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = format
+        formatter.timeZone = timeZone
+        formatters.setObject(formatter, forKey: key)
         return formatter
     }
 }

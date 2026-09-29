@@ -38,12 +38,11 @@ struct ItemEditorView: View {
     @State private var isLinksConfirmationPresented = false
     @State private var showsLinks = false
     @State private var activeSchedulePicker: SchedulePickerTarget?
-    @State private var showsNotifications = false
+    @State private var editorWidth: CGFloat = 390
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pendingLinkedRecord: Item?
     @State private var isSaveErrorPresented = false
 #if os(iOS)
-    @State private var isMobileEditorAtTop = true
     @FocusState private var mobileFocusedField: MobileEditorField?
 #endif
 
@@ -93,6 +92,9 @@ struct ItemEditorView: View {
             mobileEditor
 #endif
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _, width in
+            if width > 0 { editorWidth = width }
+        }
         .alert("Не удалось сохранить", isPresented: $isSaveErrorPresented) {
             Button("ОК", role: .cancel) {}
         } message: {
@@ -113,6 +115,8 @@ struct ItemEditorView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 mobileEditorHeader
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(strongDownDismissGesture)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
@@ -138,15 +142,8 @@ struct ItemEditorView: View {
                     .padding(.bottom, 36)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.contentOffset.y <= geometry.contentInsets.top + 2
-                } action: { _, isAtTop in
-                    isMobileEditorAtTop = isAtTop
-                }
             }
             .background(MemoryTheme.background)
-            .contentShape(Rectangle())
-            .simultaneousGesture(strongDownDismissGesture)
             .toolbar(.hidden, for: .navigationBar)
         }
         .confirmationDialog(
@@ -168,14 +165,6 @@ struct ItemEditorView: View {
         ) {
             Button("Не сохранять", role: .destructive) { closeEditor() }
             Button("Продолжить редактирование", role: .cancel) {}
-        }
-        .onChange(of: hasSchedule) { _, isScheduled in
-            if !isScheduled { reminderOffsets.removeAll() }
-        }
-        .onChange(of: scheduledDate) { oldValue, newValue in
-            guard entryKind == .event, hasEventEnd, eventEndDate <= newValue else { return }
-            let previousDuration = max(eventEndDate.timeIntervalSince(oldValue), 3_600)
-            eventEndDate = newValue.addingTimeInterval(previousDuration)
         }
     }
 
@@ -311,7 +300,7 @@ struct ItemEditorView: View {
                 let vertical = value.translation.height
                 let predictedVertical = value.predictedEndTranslation.height
 
-                guard isMobileEditorAtTop,
+                guard activeSchedulePicker == nil, !showsLinks,
                       mobileFocusedField == nil,
                       vertical > 150,
                       predictedVertical > 340,
@@ -498,35 +487,12 @@ struct ItemEditorView: View {
 
     private var scheduleCard: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Когда").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    if hasSchedule { hasSchedule = false; reminderOffsets.removeAll() }
-                    else {
-                        hasSchedule = true
-                        if reminderOffsets.isEmpty { reminderOffsets.insert(account.defaultReminderMinutes) }
-                        activeSchedulePicker = .startDate
-                    }
-                } label: {
-                    Image(systemName: hasSchedule ? "xmark" : "plus")
-                        .font(.system(size: 12, weight: .medium)).frame(width: 44, height: 44)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(hasSchedule ? "Убрать дату и время" : "Добавить дату и время")
-            }
+            settingToggle("Дата и время", isOn: scheduleEnabledBinding, identifier: "scheduleEnabled",
+                          enabled: entryKind != .event)
+                .accessibilityHint(entryKind == .event ? "Для события дата обязательна" : "Включает или снимает срок записи")
             if hasSchedule {
                 scheduleRow(title: "Дата", start: .startDate, end: .endDate)
                 scheduleRow(title: "Время", start: .startTime, end: .endTime)
-            } else {
-                Button("Без срока") {
-                    hasSchedule = true
-                    if reminderOffsets.isEmpty { reminderOffsets.insert(account.defaultReminderMinutes) }
-                    activeSchedulePicker = .startDate
-                }
-                .font(.system(size: 23)).frame(minHeight: 44).buttonStyle(.plain)
-                .modifier(MemorySchedulePopover(target: .startDate, active: $activeSchedulePicker,
-                                                selection: scheduleBinding(.startDate), minimumDate: nil))
             }
             if !eventRangeIsValid {
                 Text("Окончание должно быть позже начала").font(.caption).foregroundStyle(MemoryTheme.danger)
@@ -542,21 +508,27 @@ struct ItemEditorView: View {
         }
     }
 
+    private var scheduleEnabledBinding: Binding<Bool> {
+        Binding(get: { hasSchedule }, set: { enabled in
+            activeSchedulePicker = nil
+            hasSchedule = enabled
+            // Keep the draft's chosen date and alerts for a reversible toggle.
+            // persistChanges omits both while the schedule is off.
+        })
+    }
+
     private func scheduleRow(title: String, start: SchedulePickerTarget, end: SchedulePickerTarget) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                Text(title).font(.system(size: 14)).foregroundStyle(.secondary)
-                Spacer(minLength: 12)
+        let stacked = entryKind == .event && hasEventEnd && editorWidth < 520
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+            : AnyLayout(HStackLayout(spacing: 8))
+        // One instance of every button/popover. ViewThatFits alternatives used to
+        // construct two presenters bound to the same target during measurement.
+        return layout {
+            Text(title).font(.system(size: 14)).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                if !stacked { Spacer(minLength: 12) }
                 scheduleValue(start)
                 endControls(end)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
-                HStack(spacing: 4) {
-                    scheduleValue(start)
-                    Spacer(minLength: 0)
-                    endControls(end)
-                }
             }
         }
         .padding(.vertical, 2)
@@ -569,13 +541,14 @@ struct ItemEditorView: View {
         } label: {
             Text(target.editsDate ? MemoryDateFormatting.editorDate(date) : MemoryDateFormatting.time(date))
                 .font(.system(size: target.editsDate ? 22 : 28, weight: .regular))
-                .monospacedDigit().fixedSize().frame(minHeight: 44)
+                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75).frame(minHeight: 44)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(target.editsEnd ? "Окончание" : "Начало"), \(target.editsDate ? "дата" : "время")")
         .modifier(MemorySchedulePopover(target: target, active: $activeSchedulePicker,
                                         selection: scheduleBinding(target),
-                                        minimumDate: target.editsEnd ? scheduledDate : nil))
+                                        minimumDate: target.editsEnd ? scheduledDate : nil,
+                                        availableWidth: editorWidth))
     }
 
     @ViewBuilder private func endControls(_ target: SchedulePickerTarget) -> some View {
@@ -607,29 +580,24 @@ struct ItemEditorView: View {
     }
 
     private var notificationCard: some View {
-        Button { showsNotifications = true } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "bell").font(.system(size: 16))
-                Text("Напомнить").font(.system(size: 14))
-                Spacer(minLength: 10)
-                Text(notificationsEnabled ? ReminderLeadTime.summary(Array(reminderOffsets)) : "Не напоминать")
-                    .font(.system(size: 14, weight: .medium)).multilineTextAlignment(.trailing)
-                Image(systemName: "chevron.down").font(.system(size: 11))
-            }
-            .padding(18).frame(minHeight: 60).memoryCard()
+        VStack(alignment: .leading, spacing: 8) {
+            settingToggle("Напомнить", isOn: notificationsEnabledBinding, identifier: "notificationsEnabled")
+            if notificationsEnabled { reminderSelectionList }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 18).padding(.vertical, 10).memoryCard()
         .disabled(!hasSchedule || !applicationNotificationsEnabled)
-        .popover(isPresented: $showsNotifications) {
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle("Уведомления", isOn: notificationsEnabledBinding).toggleStyle(.switch)
-                if notificationsEnabled { reminderSelectionList }
-            }
-            .padding(18).frame(width: 310)
-            .presentationCompactAdaptation(.popover)
-            .presentationBackground(MemoryTheme.card)
-            .accessibilityAction(.escape) { showsNotifications = false }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: notificationsEnabled)
+    }
+
+    private func settingToggle(_ label: String, isOn: Binding<Bool>, identifier: String, enabled: Bool = true) -> some View {
+        HStack {
+            Text(label).font(.system(size: 15, weight: .medium))
+            Spacer(minLength: 12)
+            Toggle(label, isOn: isOn).labelsHidden()
+                .toggleStyle(.switch).tint(MemoryTheme.switchTint)
+                .disabled(!enabled).accessibilityIdentifier(identifier)
         }
+        .frame(minHeight: 44)
     }
 
     private var entryKindToggle: some View {
@@ -683,10 +651,6 @@ struct ItemEditorView: View {
                         }
                     } label: {
                         HStack(spacing: 9) {
-                            Image(systemName: "bell")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.primary)
-
                             Text(reminderTitle(for: offset))
                                 .lineLimit(1)
 
@@ -714,18 +678,15 @@ struct ItemEditorView: View {
                                 .frame(width: 30, height: 30)
                                 .background(Color.primary.opacity(0.055))
                                 .clipShape(Circle())
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Удалить уведомление")
                     }
                 }
-#if os(macOS)
                 .padding(.horizontal, 11)
-                .frame(height: 38)
-#else
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-#endif
+                .frame(minHeight: 44)
                 .background {
                     Color.primary.opacity(0.05)
                 }
@@ -748,7 +709,7 @@ struct ItemEditorView: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 5)
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Добавляет ещё одно время уведомления")

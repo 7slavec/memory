@@ -8,9 +8,12 @@ struct MemoryItemRow: View {
     var showsContextMenu = true
     var linkedCount = 0
     var onOpenLinks: (() -> Void)? = nil
-    var isPriority = false
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var hovered = false
+
+    private var isOverdue: Bool {
+        !item.isEvent && !item.isCompleted && item.dueDate.map { $0 < .now } == true
+    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 4) {
@@ -39,8 +42,8 @@ struct MemoryItemRow: View {
             }
         }
         .padding(18)
-        .foregroundStyle(isPriority ? MemoryTheme.onHighlight : MemoryTheme.accent)
-        .background(isPriority ? MemoryTheme.highlight : (hovered ? MemoryTheme.raised : MemoryTheme.card),
+        .foregroundStyle(MemoryTheme.accent)
+        .background(hovered ? MemoryTheme.raised : MemoryTheme.card,
                     in: RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
         .onHover { hovered = $0 }
         .contextMenu {
@@ -86,8 +89,15 @@ struct MemoryItemRow: View {
                     .opacity(0.72).lineLimit(2).multilineTextAlignment(.leading)
             }
             if let date = item.dueDate {
-                Text(dateLabel(date))
-                    .font(.system(size: 12, weight: .medium)).opacity(0.7)
+                HStack(spacing: 6) {
+                    if isOverdue {
+                        Circle().fill(MemoryTheme.danger).frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
+                    }
+                    Text(dateLabel(date))
+                        .foregroundStyle(isOverdue ? MemoryTheme.danger : MemoryTheme.secondaryText)
+                }
+                    .font(.system(size: 12, weight: .medium))
                     .padding(.top, 4).multilineTextAlignment(.leading)
             }
         }

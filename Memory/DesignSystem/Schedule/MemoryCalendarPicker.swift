@@ -5,12 +5,14 @@ struct MemoryCalendarPicker: View {
     @Binding var isPresented: Bool
     @State private var visibleMonth: Date
     let minimumDate: Date?
+    let width: CGFloat
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
     private let weekdayTitles = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
-    init(selection: Binding<Date>, isPresented: Binding<Bool>, minimumDate: Date? = nil) {
+    init(selection: Binding<Date>, isPresented: Binding<Bool>, minimumDate: Date? = nil, width: CGFloat = 340) {
         self.minimumDate = minimumDate
+        self.width = width
         _selection = selection
         _isPresented = isPresented
         _visibleMonth = State(initialValue: Self.startOfMonth(for: selection.wrappedValue))
@@ -20,27 +22,23 @@ struct MemoryCalendarPicker: View {
         VStack(spacing: 16) {
             HStack {
                 Button { moveMonth(by: -1) } label: {
-                    Image(systemName: "chevron.left")
-                        .frame(width: 44, height: 44)
-                        .background(Color.primary.opacity(0.055))
-                        .clipShape(Circle())
+                    monthArrow("chevron.left")
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Предыдущий месяц")
 
                 Spacer()
 
                 Text(monthTitle)
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
 
                 Spacer()
 
                 Button { moveMonth(by: 1) } label: {
-                    Image(systemName: "chevron.right")
-                        .frame(width: 30, height: 30)
-                        .background(Color.primary.opacity(0.055))
-                        .clipShape(Circle())
+                    monthArrow("chevron.right")
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Следующий месяц")
             }
 
             LazyVGrid(columns: columns, spacing: 6) {
@@ -51,7 +49,8 @@ struct MemoryCalendarPicker: View {
                         .frame(height: 24)
                 }
 
-                ForEach(Array(monthDays.enumerated()), id: \.offset) { _, day in
+                ForEach(monthSlots) { slot in
+                    let day = slot.date
                     if let day {
                         calendarDay(day)
                     } else {
@@ -62,11 +61,19 @@ struct MemoryCalendarPicker: View {
 
 
         }
-        .padding(14)
-        .frame(width: 336)
+        .padding(16)
+        .frame(width: width)
         .background(MemoryTheme.card)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
 
+    }
+
+    private func monthArrow(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 14, weight: .semibold))
+            .frame(width: 32, height: 32)
+            .background(MemoryTheme.raised, in: Circle())
+            .frame(width: 44, height: 44).contentShape(Rectangle())
     }
 
     private func calendarDay(_ day: Date) -> some View {
@@ -106,17 +113,8 @@ struct MemoryCalendarPicker: View {
         return calendar
     }
 
-    private var monthDays: [Date?] {
-        let start = Self.startOfMonth(for: visibleMonth)
-        guard let dayRange = calendar.range(of: .day, in: .month, for: start) else { return [] }
-        let weekday = calendar.component(.weekday, from: start)
-        let leadingEmptyDays = (weekday - calendar.firstWeekday + 7) % 7
-        var result = Array<Date?>(repeating: nil, count: leadingEmptyDays)
-
-        result.append(contentsOf: dayRange.compactMap { day in
-            calendar.date(byAdding: .day, value: day - 1, to: start)
-        })
-        return result
+    private var monthSlots: [MemoryCalendarGrid.Slot] {
+        MemoryCalendarGrid.slots(for: visibleMonth, calendar: calendar)
     }
 
     private var monthTitle: String {
@@ -126,9 +124,7 @@ struct MemoryCalendarPicker: View {
 
     private func moveMonth(by value: Int) {
         guard let month = calendar.date(byAdding: .month, value: value, to: visibleMonth) else { return }
-        withAnimation(.easeInOut(duration: 0.16)) {
-            visibleMonth = Self.startOfMonth(for: month)
-        }
+        visibleMonth = Self.startOfMonth(for: month)
     }
 
     private func selectDay(_ day: Date) {
@@ -153,4 +149,23 @@ struct MemoryCalendarPicker: View {
         formatter.dateFormat = "LLLL yyyy"
         return formatter
     }()
+}
+
+/// Fixed-size month layout, independent of presentation and safe to unit-test.
+enum MemoryCalendarGrid {
+    struct Slot: Identifiable {
+        let id: Date
+        let date: Date?
+    }
+
+    static func slots(for month: Date, calendar: Calendar) -> [Slot] {
+        guard let start = calendar.dateInterval(of: .month, for: month)?.start,
+              let dayRange = calendar.range(of: .day, in: .month, for: start) else { return [] }
+        let leading = (calendar.component(.weekday, from: start) - calendar.firstWeekday + 7) % 7
+        return (0..<42).compactMap { slot in
+            guard let date = calendar.date(byAdding: .day, value: slot - leading, to: start) else { return nil }
+            let day = slot - leading + 1
+            return Slot(id: date, date: dayRange.contains(day) ? date : nil)
+        }
+    }
 }

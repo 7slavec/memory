@@ -46,6 +46,7 @@ enum MemoryTheme {
     static let raised = adaptive(light: 0xE8E8E8, dark: 0x343434)
     static let secondaryText = adaptive(light: 0x626262, dark: 0xB6B6B6)
     static let danger = adaptive(light: 0xAB3826, dark: 0xFFAC99)
+    static let switchTint = adaptive(light: 0x4B5142, dark: 0x747C67)
     static let cardRadius: CGFloat = 20
     static let pageInset: CGFloat = 20
     static let motion = Animation.spring(response: 0.48, dampingFraction: 0.92)
