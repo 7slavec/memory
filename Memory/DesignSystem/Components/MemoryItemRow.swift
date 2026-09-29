@@ -40,6 +40,13 @@ struct MemoryItemRow: View {
         .background(item.isEvent ? (hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
                     : (hovered ? MemoryTheme.raised : MemoryTheme.card),
                     in: RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
+        .overlay {
+            if isOverdue {
+                RoundedRectangle(cornerRadius: MemoryTheme.cardRadius)
+                    .stroke(MemoryTheme.danger.opacity(0.45), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+        }
         .onHover { hovered = $0 }
         .contextMenu {
             if showsContextMenu {

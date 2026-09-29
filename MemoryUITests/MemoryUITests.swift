@@ -13,6 +13,25 @@ import AppKit
 final class MemoryUITests: XCTestCase {
 
 #if os(iOS)
+    @MainActor func testCompactSchedulePanelKeepsMonthVisible() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-links"]
+        app.launch()
+        XCTAssertTrue(app.textFields["recordEditorTitle"].waitForExistence(timeout: 10))
+        app.switches["scheduleEnabled"].tap()
+        app.buttons["Начало, дата"].tap()
+        let previous = app.buttons["Предыдущий месяц"]
+        let next = app.buttons["Следующий месяц"]
+        XCTAssertTrue(previous.waitForExistence(timeout: 3))
+        XCTAssertTrue(previous.isHittable && next.isHittable)
+        XCTAssertGreaterThanOrEqual(previous.frame.minY, 0)
+        XCTAssertLessThanOrEqual(next.frame.maxY, app.frame.maxY)
+        let calendarShot = XCTAttachment(screenshot: app.screenshot())
+        calendarShot.name = "Anchored calendar with visible month"; calendarShot.lifetime = .keepAlways; add(calendarShot)
+        app.buttons["Закрыть выбор даты и времени"].coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.05)).tap()
+        XCTAssertTrue(app.textFields["recordEditorTitle"].exists)
+    }
+
     @MainActor func testMobilePickerSwitchAndOrbSwipe() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-links"]

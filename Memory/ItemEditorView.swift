@@ -32,6 +32,7 @@ struct ItemEditorView: View {
     @State private var entryKind: EntryKind
     @State private var eventEndDate: Date
     @State private var hasEventEnd: Bool
+    @State private var isEndDateExpanded = false
     @State private var reminderOffsets: Set<Int>
     @State private var isDeleteConfirmationPresented = false
     @State private var isDiscardConfirmationPresented = false
@@ -150,6 +151,9 @@ struct ItemEditorView: View {
             .contentShape(Rectangle())
             .simultaneousGesture(strongDownDismissGesture)
             .toolbar(.hidden, for: .navigationBar)
+            .modifier(MemoryMobileSchedulePanel(active: $activeSchedulePicker,
+                                                selection: scheduleBinding(activeSchedulePicker ?? .startDate),
+                                                minimumDate: activeSchedulePicker?.editsEnd == true ? scheduledDate : nil))
         }
         .interactiveDismissDisabled()
         .confirmationDialog(
@@ -352,17 +356,19 @@ struct ItemEditorView: View {
         VStack(spacing: 0) {
             macHeader
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    macPrimaryContent
-
-                    macKindPicker
-
-
-                    macScheduleCard
-                    macNotificationCard
+            GeometryReader { geometry in
+                let inset: CGFloat = isCompactDesktopPane ? 18 : 24
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        macPrimaryContent
+                        macKindPicker
+                        macScheduleCard
+                        macNotificationCard
+                    }
+                    .frame(width: min(672, max(0, geometry.size.width - inset * 2)), alignment: .leading)
+                    .padding(inset)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(isCompactDesktopPane ? 18 : 24)
             }
 
             macFooter
@@ -427,6 +433,8 @@ struct ItemEditorView: View {
                 )
                 .lineSpacing(2)
                 .lineLimit(1...6)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("recordEditorTitle")
 
             if isDescriptionPresented {
@@ -513,15 +521,20 @@ struct ItemEditorView: View {
         }
         .padding(.horizontal, 18).padding(.vertical, 10)
         .memoryCard()
+#if os(macOS)
         .modifier(MemorySchedulePopover(active: $activeSchedulePicker,
                                         selection: scheduleBinding(activeSchedulePicker ?? .startDate),
                                         minimumDate: activeSchedulePicker?.editsEnd == true ? scheduledDate : nil,
                                         availableWidth: editorWidth))
+#endif
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hasSchedule)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hasEventEnd)
         .onChange(of: scheduledDate) { old, new in
             guard entryKind == .event, hasEventEnd, eventEndDate <= new else { return }
             eventEndDate = new.addingTimeInterval(max(60, eventEndDate.timeIntervalSince(old)))
+        }
+        .onChange(of: activeSchedulePicker) { _, target in
+            if target == nil { isEndDateExpanded = false }
         }
     }
 
@@ -535,15 +548,11 @@ struct ItemEditorView: View {
     }
 
     private func scheduleRow(title: String, start: SchedulePickerTarget, end: SchedulePickerTarget) -> some View {
-        let stacked = entryKind == .event && hasEventEnd && editorWidth < 520
-        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
-            : AnyLayout(HStackLayout(spacing: 8))
-        // One instance of every button/popover. ViewThatFits alternatives used to
-        // construct two presenters bound to the same target during measurement.
-        return layout {
-            Text(title).font(.system(size: 14)).foregroundStyle(.secondary)
-            HStack(spacing: 6) {
-                if !stacked { Spacer(minLength: 12) }
+        HStack(spacing: 4) {
+            Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .leading)
+            Spacer(minLength: 0)
+            HStack(spacing: 3) {
                 scheduleValue(start)
                 endControls(end)
             }
@@ -554,35 +563,63 @@ struct ItemEditorView: View {
     private func scheduleValue(_ target: SchedulePickerTarget) -> some View {
         let date = target.editsEnd ? eventEndDate : scheduledDate
         return Button {
+#if os(iOS)
+            mobileFocusedField = nil
+#endif
             activeSchedulePicker = target
         } label: {
             Text(target.editsDate ? MemoryDateFormatting.editorDate(date) : MemoryDateFormatting.time(date))
-                .font(.system(size: target.editsDate ? 22 : 28, weight: .regular))
+                .font(.system(size: target.editsDate ? 20 : 26, weight: .regular))
                 .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75).frame(minHeight: 44)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(target.editsEnd ? "Окончание" : "Начало"), \(target.editsDate ? "дата" : "время")")
+        .anchorPreference(key: ScheduleFieldAnchors.self, value: .bounds) { [target: $0] }
     }
 
     @ViewBuilder private func endControls(_ target: SchedulePickerTarget) -> some View {
         if entryKind == .event {
-            if hasEventEnd {
-                Text("до").font(.caption).foregroundStyle(.secondary)
+            if hasEventEnd && (!target.editsDate || isEndDateExpanded
+                || !Calendar.current.isDate(scheduledDate, inSameDayAs: eventEndDate)) {
+                Text("–").font(.caption).foregroundStyle(.secondary)
                 scheduleValue(target)
-                Button { hasEventEnd = false } label: {
-                    Image(systemName: "xmark").font(.system(size: 11)).frame(width: 44, height: 44)
+                Button {
+                    if target.editsDate {
+                        let time = Calendar.current.dateComponents([.hour, .minute], from: eventEndDate)
+                        let sameDay = Calendar.current.date(bySettingHour: time.hour ?? 0, minute: time.minute ?? 0,
+                                                           second: 0, of: scheduledDate) ?? scheduledDate
+                        if sameDay > scheduledDate { eventEndDate = sameDay }
+                        else { hasEventEnd = false }
+                        isEndDateExpanded = false
+                    } else {
+                        hasEventEnd = false; isEndDateExpanded = false
+                    }
+                } label: {
+                    scheduleAccessory("xmark")
                 }
-                .buttonStyle(.plain).accessibilityLabel("Убрать окончание")
+                .buttonStyle(.plain).accessibilityLabel(target.editsDate ? "Убрать дату окончания" : "Убрать окончание")
             } else {
                 Button {
-                    eventEndDate = max(eventEndDate, scheduledDate.addingTimeInterval(3600))
+#if os(iOS)
+                    mobileFocusedField = nil
+#endif
+                    if !hasEventEnd { eventEndDate = scheduledDate.addingTimeInterval(3600) }
+                    if target.editsDate { isEndDateExpanded = true }
                     hasEventEnd = true; activeSchedulePicker = target
                 } label: {
-                    Image(systemName: "plus").font(.system(size: 14)).frame(width: 44, height: 44)
+                    scheduleAccessory("plus")
                 }
-                .buttonStyle(.plain).accessibilityLabel("Добавить окончание")
+                .buttonStyle(.plain).accessibilityLabel(target.editsDate ? "Добавить дату окончания" : "Добавить время окончания")
+                .anchorPreference(key: ScheduleFieldAnchors.self, value: .bounds) { [target: $0] }
             }
         }
+    }
+
+    private func scheduleAccessory(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
+            .frame(width: 28, height: 28)
+            .background(MemoryTheme.raised, in: Circle())
+            .frame(width: 44, height: 44).contentShape(Rectangle())
     }
 
     private func scheduleBinding(_ target: SchedulePickerTarget) -> Binding<Date> {

@@ -350,8 +350,8 @@ struct ContentView: View {
                 : min(max(desktopSidebarWidth, 224), maximumSidebarWidth)
             let resizeHandleWidth: CGFloat = isDesktopSidebarCollapsed ? 1 : 9
             let workspaceWidth = max(proxy.size.width - effectiveSidebarWidth - resizeHandleWidth, 0)
-            let showsDetailPane = editingItem != nil && workspaceWidth >= 1_040
-            let detailPaneWidth = min(max(workspaceWidth * 0.42, 440), 520)
+            let showsDetailPane = editingItem != nil && workspaceWidth >= 760
+            let detailPaneWidth = min(max(workspaceWidth * 0.48, 360), 480)
 
             HStack(spacing: 0) {
                 desktopSidebar
@@ -391,27 +391,23 @@ struct ContentView: View {
         if let session = voiceReviewSession {
             voiceReviewPage(session)
         } else {
-            ZStack {
-                HStack(spacing: 0) {
-                    desktopSectionContent
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .opacity(editingItem != nil && !showsDetailPane ? 0 : 1)
-                        .allowsHitTesting(editingItem == nil || showsDetailPane)
-                        .accessibilityHidden(editingItem != nil && !showsDetailPane)
+            ZStack(alignment: .trailing) {
+                desktopSectionContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.trailing, showsDetailPane ? detailPaneWidth + 16 : 0)
+                    .opacity(editingItem != nil && !showsDetailPane ? 0 : 1)
+                    .allowsHitTesting(editingItem == nil || showsDetailPane)
+                    .accessibilityHidden(editingItem != nil && !showsDetailPane)
 
-                    if let item = editingItem, showsDetailPane {
-                        desktopItemEditor(item, compact: true)
-                            .id(item.id)
-                            .frame(width: detailPaneWidth)
-                            .padding(.vertical, 16)
-                            .padding(.trailing, 16)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
-                }
-
-                if let item = editingItem, !showsDetailPane {
-                    desktopItemEditor(item, compact: false)
+                // Keep one editor identity when resizing across the breakpoint:
+                // changing its width must not discard the user's draft.
+                if let item = editingItem {
+                    desktopItemEditor(item, compact: showsDetailPane)
                         .id(item.id)
+                        .frame(width: showsDetailPane ? detailPaneWidth : nil)
+                        .frame(maxWidth: showsDetailPane ? nil : .infinity)
+                        .padding(.vertical, showsDetailPane ? 16 : 0)
+                        .padding(.trailing, showsDetailPane ? 16 : 0)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }

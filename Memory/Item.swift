@@ -29,10 +29,13 @@ enum MemoryDateFormatting {
     }
 
     static func editorDate(_ date: Date, relativeTo referenceDate: Date = .now) -> String {
-        let calendar = Calendar.current
+        let calendar = Calendar(identifier: .gregorian)
         let includesYear = calendar.component(.year, from: date)
             != calendar.component(.year, from: referenceDate)
-        return formatter(includesYear ? "d MMM yyyy" : "d MMM").string(from: date)
+        let month = ["янв", "фев", "мар", "апр", "май", "июн",
+                     "июл", "авг", "сен", "окт", "ноя", "дек"][calendar.component(.month, from: date) - 1]
+        let day = calendar.component(.day, from: date)
+        return "\(day) \(month)" + (includesYear ? " \(calendar.component(.year, from: date))" : "")
     }
 
     static func time(_ date: Date) -> String {

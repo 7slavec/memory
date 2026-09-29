@@ -43,12 +43,12 @@ enum MemoryTheme {
     static let onHighlight = Color(red: 28/255, green: 33/255, blue: 16/255)
     static let background = adaptive(light: 0xFFFFFF, dark: 0x131313)
     static let card = adaptive(light: 0xF2F2F2, dark: 0x242424)
-    static let eventCard = adaptive(light: 0xFFB29A, dark: 0xF39B83)
-    static let eventCardHover = adaptive(light: 0xFFA78C, dark: 0xFFAE95)
-    static let onEventCard = Color(red: 38/255, green: 26/255, blue: 23/255)
+    static let eventCard = highlight
+    static let eventCardHover = Color(red: 220/255, green: 235/255, blue: 76/255)
+    static let onEventCard = onHighlight
     static let raised = adaptive(light: 0xE8E8E8, dark: 0x343434)
     static let secondaryText = adaptive(light: 0x626262, dark: 0xB6B6B6)
-    static let danger = adaptive(light: 0xAB3826, dark: 0xFFAC99)
+    static let danger = adaptive(light: 0xC82632, dark: 0xFF5965)
     static let switchTint = adaptive(light: 0x4B5142, dark: 0x747C67)
     static let cardRadius: CGFloat = 20
     static let pageInset: CGFloat = 20
