@@ -674,7 +674,7 @@ struct ItemEditorView: View {
             set: { isEnabled in
                 if isEnabled {
                     if reminderOffsets.isEmpty {
-                        reminderOffsets.insert(account.defaultReminderMinutes)
+                        reminderOffsets.insert(account.defaultReminderMinutes(for: entryKind))
                     }
                 } else {
                     reminderOffsets.removeAll()

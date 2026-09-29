@@ -12,6 +12,32 @@ import AppKit
 
 final class MemoryUITests: XCTestCase {
 
+    @MainActor func testProfileAvatarAndNotificationNavigation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-profile"]
+        app.launch()
+        ensureWindow(app)
+        let avatar = app.buttons["Изменить аватар"]
+        XCTAssertTrue(avatar.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Создание"].exists)
+        XCTAssertFalse(app.staticTexts["Оформление"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Shared Flow profile"; shot.lifetime = .keepAlways; add(shot)
+        avatar.tap()
+        XCTAssertTrue(app.buttons["Пёс"].waitForExistence(timeout: 5))
+        app.buttons["Пёс"].tap()
+        app.buttons["Мята"].tap()
+        let editor = XCTAttachment(screenshot: app.screenshot())
+        editor.name = "Avatar mini editor"; editor.lifetime = .keepAlways; add(editor)
+        app.buttons["Готово"].tap()
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5))
+        app.buttons["Уведомления"].tap()
+        XCTAssertTrue(app.buttons["Напоминания: время уведомления"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["События: время уведомления"].exists)
+        app.buttons["Назад"].tap()
+        XCTAssertTrue(avatar.exists)
+    }
+
 #if os(iOS)
     @MainActor func testCompactSchedulePanelKeepsMonthVisible() {
         let app = XCUIApplication()

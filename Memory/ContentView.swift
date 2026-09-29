@@ -184,15 +184,9 @@ struct ContentView: View {
     @State private var isEditingNewDesktopItem = false
 #endif
 #if os(iOS)
-    @AppStorage(ReminderScheduler.applicationNotificationsEnabledKey)
-    private var applicationNotificationsEnabled = true
-    @AppStorage(AppAppearance.storageKey)
-    private var appAppearance: AppAppearance = .system
     @State private var isKeyboardVisible = false
     @State private var isMobileProfilePresented = false
     @State private var isMobileArchivePresented = false
-    @State private var isVoiceLabPresented = false
-    @State private var isProfileWorking = false
 #endif
 
     var body: some View {
@@ -224,7 +218,13 @@ struct ContentView: View {
 #if DEBUG
             if VoiceReviewTesting.isUnitTestHost { return }
             if VoiceReviewTesting.isEnabled {
-                if VoiceReviewTesting.isLinksEnabled {
+                if VoiceReviewTesting.isProfileEnabled {
+#if os(macOS)
+                    desktopSection = .profile
+#else
+                    isMobileProfilePresented = true
+#endif
+                } else if VoiceReviewTesting.isLinksEnabled {
                     let first = Item(title: "Отправить заявку", notificationsEnabled: false)
                     let second = Item(title: "Вебинар по дизайну", notificationsEnabled: false)
                     let third = Item(title: "Прочитать материалы", notificationsEnabled: false)
@@ -262,6 +262,7 @@ struct ContentView: View {
                 await refreshNotificationStatus()
 #endif
                 await synchronize()
+                await account.refreshPersonalization()
             }
         }
         .onChange(of: selectedSection) { _, section in
@@ -310,11 +311,6 @@ struct ContentView: View {
                 onDelete: { true },
                 isNew: true
             )
-        }
-        .fullScreenCover(isPresented: $isVoiceLabPresented) {
-            VoiceLabView {
-                isVoiceLabPresented = false
-            }
         }
 #endif
 #if os(macOS)
@@ -477,21 +473,11 @@ struct ContentView: View {
                 selectDesktopSection(.profile)
             } label: {
                 if isDesktopSidebarCollapsed {
-                    Text(desktopProfileInitial)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(MemoryTheme.onAccent)
-                        .frame(width: 42, height: 42)
-                        .background(MemoryTheme.accent.gradient)
-                        .clipShape(Circle())
+                    ProfileAvatarView(avatar: account.personalization.avatar, size: 42)
                         .frame(maxWidth: .infinity)
                 } else {
                     HStack(spacing: 11) {
-                        Text(desktopProfileInitial)
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundStyle(MemoryTheme.onAccent)
-                            .frame(width: 36, height: 36)
-                            .background(MemoryTheme.accent.gradient)
-                            .clipShape(Circle())
+                        ProfileAvatarView(avatar: account.personalization.avatar, size: 36)
 
                         Text(account.email ?? "Профиль")
                             .font(.subheadline.weight(.medium))
@@ -855,6 +841,10 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var desktopArchiveContent: some View {
+        HStack {
+            Spacer()
+            ArchiveClearButton(itemIDs: completedItems.map(\.id), onClear: clearArchive)
+        }
         if searchedCompletedItems.isEmpty {
             RecordsEmptyView(
                 icon: archiveSearchTextIsEmpty ? "archivebox" : "magnifyingglass",
@@ -901,19 +891,10 @@ struct ContentView: View {
     }
 
     private var desktopProfilePage: some View {
-        AccountView(
-            embedded: true,
-            onOpenArchive: { selectDesktopSection(.archive) }
-        )
-            .environmentObject(account)
+        ProfileScreen(archiveCount: completedItems.count,
+                      onOpenArchive: { selectDesktopSection(.archive) },
+                      onSignIn: { isAccountPresented = true })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var desktopProfileInitial: String {
-        guard let first = account.email?.trimmingCharacters(in: .whitespacesAndNewlines).first else {
-            return "N"
-        }
-        return String(first).uppercased()
     }
 
     private var homePriorityItem: Item? {
@@ -940,7 +921,9 @@ struct ContentView: View {
     private var mobileMainLayout: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                mobilePersistentHeader
+                if !isMobileProfilePresented || isMobileArchivePresented {
+                    mobilePersistentHeader
+                }
 
                 GeometryReader { proxy in
                     ZStack {
@@ -1270,301 +1253,19 @@ struct ContentView: View {
     }
 
     private var mobileProfileContent: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(spacing: 26) {
-                    mobileProfileHero
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Создание")
-                            .font(.system(size: 17, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 4)
-
-                        HStack(spacing: 14) {
-                            profileSettingsIcon(account.defaultEntryKind.icon)
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Новая запись")
-                                    .font(.body.weight(.medium))
-                                Text("Если тип не указан в тексте")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Spacer(minLength: 8)
-
-                            Menu {
-                                ForEach(EntryKind.allCases) { kind in
-                                    Button {
-                                        setDefaultEntryKind(kind)
-                                    } label: {
-                                        if kind == account.defaultEntryKind {
-                                            Label(kind.title, systemImage: "checkmark")
-                                        } else {
-                                            Text(kind.title)
-                                        }
-                                    }
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Text(account.defaultEntryKind.title)
-                                        .lineLimit(1)
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.primary)
-                                .padding(.horizontal, 11)
-                                .frame(height: 36)
-                                .background(Color.primary.opacity(0.055))
-                                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(16)
-                        .memoryCard()
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Уведомления")
-                            .font(.system(size: 17, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 4)
-
-                        VStack(spacing: 0) {
-                            HStack(spacing: 14) {
-                                profileSettingsIcon("bell.fill")
-
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Уведомления")
-                                        .font(.body.weight(.medium))
-                                    Text(applicationNotificationsEnabled ? "Включены" : "Выключены")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer(minLength: 12)
-
-                                Toggle("Уведомления", isOn: applicationNotificationsBinding)
-                                    .labelsHidden()
-                            }
-                            .padding(16)
-
-                            Divider()
-                                .padding(.leading, 66)
-
-                            HStack(spacing: 14) {
-                                profileSettingsIcon("clock.fill")
-
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Когда напоминать")
-                                        .font(.body.weight(.medium))
-                                    Text("Для новых записей")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer(minLength: 8)
-
-                                Menu {
-                                    ForEach(ReminderLeadTime.allCases) { option in
-                                        Button {
-                                            setDefaultReminder(option.rawValue)
-                                        } label: {
-                                            if option.rawValue == account.defaultReminderMinutes {
-                                                Label(option.title, systemImage: "checkmark")
-                                            } else {
-                                                Text(option.title)
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Text(defaultReminderTitle)
-                                            .lineLimit(1)
-                                        Image(systemName: "chevron.up.chevron.down")
-                                            .font(.system(size: 10, weight: .semibold))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(.primary)
-                                    .padding(.horizontal, 11)
-                                    .frame(height: 34)
-                                    .background(Color.primary.opacity(0.055))
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(16)
-                        }
-                        .memoryCard()
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Оформление")
-                            .font(.system(size: 17, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 4)
-
-                        VStack(alignment: .leading, spacing: 14) {
-                            HStack(spacing: 14) {
-                                profileSettingsIcon("circle.lefthalf.filled")
-
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Тема приложения")
-                                        .font(.body.weight(.medium))
-                                    Text(appAppearance.details)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer(minLength: 0)
-                            }
-
-                            Picker("Тема приложения", selection: $appAppearance) {
-                                ForEach(AppAppearance.allCases) { appearance in
-                                    Text(appearance.title).tag(appearance)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .accessibilityHint("Меняет оформление всего приложения")
-                        }
-                        .padding(16)
-                        .memoryCard()
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Записи")
-                            .font(.system(size: 17, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 4)
-
-                        Button(action: openMobileArchive) {
-                            HStack(spacing: 14) {
-                                profileSettingsIcon("archivebox.fill")
-
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Архив")
-                                        .font(.body.weight(.medium))
-                                    Text("Выполненные напоминания")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer(minLength: 10)
-
-                                if !completedItems.isEmpty {
-                                    Text("\(completedItems.count)")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(MemoryTheme.accent)
-                                        .padding(.horizontal, 9)
-                                        .frame(minHeight: 28)
-                                        .background(MemoryTheme.accent.opacity(0.11))
-                                        .clipShape(Capsule())
-                                }
-
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(16)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .memoryCard()
-                        .accessibilityHint("Открывает выполненные напоминания")
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Голосовой ввод")
-                            .font(.system(size: 17, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 4)
-
-                        Button {
-                            isVoiceLabPresented = true
-                        } label: {
-                            HStack(spacing: 14) {
-                                profileSettingsIcon("waveform.badge.magnifyingglass")
-
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Voice Lab")
-                                        .font(.body.weight(.medium))
-                                    Text("Все настройки и тесты голосового ввода")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer(minLength: 10)
-
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(16)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .memoryCard()
-                        .accessibilityHint("Открывает лабораторию голосового ввода")
-                    }
-
-                    Spacer(minLength: 26)
-
-                    if account.isSignedIn {
-                        Button(role: .destructive) {
-                            signOutFromMobileProfile()
-                        } label: {
-                            HStack(spacing: 10) {
-                                if isProfileWorking {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                                }
-                                Text("Выйти")
-                            }
-                            .font(.body.weight(.medium))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 15)
-                            .background(Color.red.opacity(0.09))
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(isProfileWorking)
-                    } else {
-                        Button {
-                            isAccountPresented = true
-                        } label: {
-                            Text("Войти или создать аккаунт")
-                                .font(.body.weight(.medium))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 15)
-                                .foregroundStyle(MemoryTheme.onAccent)
-                                .background(MemoryTheme.accent.gradient)
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .frame(maxWidth: 620)
-                .frame(minHeight: max(proxy.size.height - 44, 0), alignment: .top)
-                .padding(.horizontal, 22)
-                .padding(.top, 24)
-                .padding(.bottom, 20)
-                .frame(maxWidth: .infinity)
-            }
-            .scrollDismissesKeyboard(.interactively)
-        }
-        .background(MemoryTheme.background)
+        ProfileScreen(archiveCount: completedItems.count,
+                      isVisible: isMobileProfilePresented && !isMobileArchivePresented,
+                      onBack: closeMobileProfile,
+                      onOpenArchive: openMobileArchive,
+                      onSignIn: { isAccountPresented = true })
     }
-
     private var mobileArchiveContent: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Spacer()
+                    ArchiveClearButton(itemIDs: completedItems.map(\.id), onClear: clearArchive)
+                }
                 archiveSearchField
 
                 if searchedCompletedItems.isEmpty {
@@ -1612,123 +1313,6 @@ struct ContentView: View {
         .memoryCard()
     }
 
-    private var mobileProfileHero: some View {
-        VStack(spacing: 16) {
-            Text(profileInitial)
-                .font(.system(size: 36, weight: .semibold, design: .rounded))
-                .foregroundStyle(MemoryTheme.onAccent)
-                .frame(width: 96, height: 96)
-                .background(MemoryTheme.accent.gradient)
-                .clipShape(Circle())
-                .overlay {
-                    Circle().stroke(.white.opacity(0.16), lineWidth: 1)
-                }
-                .shadow(color: MemoryTheme.accent.opacity(0.22), radius: 22, y: 8)
-
-            HStack(spacing: 7) {
-                Text(account.email ?? "Локальный профиль")
-                    .font(.system(size: 22, weight: .medium, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-
-                Image(systemName: profileSyncIcon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(profileSyncColor)
-                    .accessibilityLabel(account.statusText)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func profileSettingsIcon(_ systemName: String) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(MemoryTheme.accent)
-            .frame(width: 38, height: 38)
-            .background(MemoryTheme.accent.opacity(0.11))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private var profileInitial: String {
-        guard let first = account.email?.trimmingCharacters(in: .whitespacesAndNewlines).first else {
-            return "N"
-        }
-        return String(first).uppercased()
-    }
-
-    private var profileSyncIcon: String {
-        guard account.isSignedIn else { return "icloud.slash" }
-        switch account.state {
-        case .syncing: return "arrow.triangle.2.circlepath"
-        case .failed: return "exclamationmark.triangle.fill"
-        default: return "checkmark.icloud.fill"
-        }
-    }
-
-    private var profileSyncColor: Color {
-        if case .failed = account.state { return .red }
-        return account.isSignedIn ? MemoryTheme.accent : .secondary
-    }
-
-    private var applicationNotificationsBinding: Binding<Bool> {
-        Binding(
-            get: { applicationNotificationsEnabled },
-            set: { setApplicationNotificationsEnabled($0) }
-        )
-    }
-
-    private var defaultReminderTitle: String {
-        ReminderLeadTime(rawValue: account.defaultReminderMinutes)?.compactTitle ?? "В момент"
-    }
-
-    private func setDefaultReminder(_ value: Int) {
-        Task {
-            do {
-                try await account.setDefaultReminderMinutes(value)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    private func setDefaultEntryKind(_ kind: EntryKind) {
-        Task {
-            do {
-                try await account.setDefaultEntryKind(kind)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    private func setApplicationNotificationsEnabled(_ isEnabled: Bool) {
-        applicationNotificationsEnabled = isEnabled
-        ReminderScheduler.setApplicationNotificationsEnabled(isEnabled)
-
-        if isEnabled {
-            for item in activeItems {
-                scheduleReminder(for: item)
-            }
-        } else {
-            for item in items {
-                ReminderScheduler.cancel(id: item.id)
-            }
-        }
-    }
-
-    private func signOutFromMobileProfile() {
-        guard !isProfileWorking else { return }
-        isProfileWorking = true
-        Task {
-            do {
-                try await account.signOut()
-                closeMobileProfile()
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isProfileWorking = false
-        }
-    }
 
     private var responsiveMobilePageSwipeGesture: some Gesture {
         DragGesture(minimumDistance: 18)
@@ -2047,15 +1631,7 @@ struct ContentView: View {
         Button {
             openMobileProfile()
         } label: {
-            Image(systemName: "person.fill")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 52, height: 52)
-                .background(Color.primary.opacity(0.065))
-                .clipShape(Circle())
-                .overlay {
-                    Circle().stroke(Color.primary.opacity(0.07), lineWidth: 1)
-                }
+            ProfileAvatarView(avatar: account.personalization.avatar, size: 52)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Профиль")
@@ -2419,7 +1995,7 @@ struct ContentView: View {
             endDate: endDate,
             reminderOffsets: dueDate == nil
                 ? []
-                : (reminderOffsets ?? [account.defaultReminderMinutes]),
+                : (reminderOffsets ?? [account.defaultReminderMinutes(for: entryKind)]),
             ownerID: account.userID
         )
         withAnimation(.snappy) { modelContext.insert(item) }
@@ -2674,7 +2250,7 @@ struct ContentView: View {
             dueDate: startDate,
             entryKind: entryKind,
             endDate: entryKind == .event ? endDate : nil,
-            reminderOffsets: startDate == nil ? [] : [account.defaultReminderMinutes],
+            reminderOffsets: startDate == nil ? [] : [account.defaultReminderMinutes(for: entryKind)],
             ownerID: account.userID
         )
 
@@ -2799,6 +2375,14 @@ struct ContentView: View {
         ReminderScheduler.cancel(id: id)
         account.markLocalChange(modelContext: modelContext)
         return true
+    }
+
+    private func clearArchive(_ ids: Set<UUID>) {
+        do {
+            let removed = try ArchiveDeletion.clear(ids: ids, ownerID: account.userID, context: modelContext)
+            removed.forEach { ReminderScheduler.cancel(id: $0) }
+            if !removed.isEmpty { account.markLocalChange(modelContext: modelContext) }
+        } catch { errorMessage = "Не удалось очистить архив: \(error.localizedDescription)" }
     }
 
     @discardableResult private func saveChanges() -> Bool {

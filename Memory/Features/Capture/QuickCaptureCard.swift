@@ -97,8 +97,6 @@ struct QuickCaptureCard: View {
     @State private var isRecordsComposerPresented = false
     @State private var lastOrbDrag = Date.distantPast
     @GestureState private var isOrbDragging = false
-    @Namespace private var homeComposerNamespace
-    @Namespace private var captureChromeNamespace
     @FocusState private var focusedField: QuickCaptureFocus?
     let defaultPreset: QuickDuePreset
     let presentation: QuickCapturePresentation
@@ -186,7 +184,6 @@ struct QuickCaptureCard: View {
             if isHome {
                 homeBody
                     .opacity(isRecordsPage ? 0 : 1)
-                    .offset(x: isRecordsPage && !reduceMotion ? 24 : 0)
                     .allowsHitTesting(!isRecordsPage)
                     .accessibilityHidden(isRecordsPage)
             } else {
@@ -207,14 +204,19 @@ struct QuickCaptureCard: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 18) {
             if isHome,
-               (!isRecordsPage || isRecordsComposerPresented),
                pendingVoiceClarification == nil {
-                sharedCaptureChrome
+                homeComposer
+                    .frame(maxWidth: 620)
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 10)
                     .frame(maxWidth: .infinity)
                     .background {
                         MemoryTheme.background
                             .ignoresSafeArea(edges: .bottom)
                     }
+                    .opacity(!isRecordsPage || isRecordsComposerPresented ? 1 : 0)
+                    .allowsHitTesting(!isRecordsPage || isRecordsComposerPresented)
+                    .accessibilityHidden(isRecordsPage && !isRecordsComposerPresented)
                 }
         }
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)
@@ -340,20 +342,12 @@ struct QuickCaptureCard: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Добавить напоминание")
-                    .matchedGeometryEffect(id: "captureChrome", in: captureChromeNamespace)
                     .zIndex(20)
                 }
                 .frame(maxWidth: 620)
                 .padding(.horizontal, 22)
                 .padding(.bottom, 10)
             }
-        } else {
-            homeComposer
-                .matchedGeometryEffect(id: "homeComposer", in: homeComposerNamespace)
-                .matchedGeometryEffect(id: "captureChrome", in: captureChromeNamespace)
-                .frame(maxWidth: 620)
-                .padding(.horizontal, 22)
-                .padding(.bottom, 10)
         }
     }
 
@@ -1159,7 +1153,7 @@ struct QuickCaptureCard: View {
             }
             resetVoiceComposer()
             let reviewEntries = reconciledEntries.map {
-                VoiceReviewEntry($0, defaultReminderMinutes: account.defaultReminderMinutes)
+                VoiceReviewEntry($0, defaultReminderMinutes: account.defaultReminderMinutes(for: $0.kind))
             }
             onReviewBatch(VoiceBatchReview(referenceDate: referenceDate, entries: reviewEntries))
             return
@@ -1213,7 +1207,7 @@ struct QuickCaptureCard: View {
                     draft: finalDraft,
                     kind: .event,
                     endDate: interpretedEntry?.endDate
-                ), defaultReminderMinutes: account.defaultReminderMinutes)]
+                ), defaultReminderMinutes: account.defaultReminderMinutes(for: .event))]
             ))
             return
         }

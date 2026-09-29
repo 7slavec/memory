@@ -21,6 +21,10 @@ final class AccountSyncController: ObservableObject {
     @Published private(set) var defaultEntryKind: EntryKind
     @Published private(set) var lastSignedInEmail: String?
     @Published private(set) var linkSyncError: String?
+    @Published private(set) var personalization = ProfilePersonalization()
+    @Published private(set) var isSavingPersonalization = false
+    @Published private(set) var personalizationError: String?
+    private var personalizationRevision = 0
 
     let isConfigured: Bool
     private let client: SupabaseClient?
@@ -36,6 +40,7 @@ final class AccountSyncController: ObservableObject {
     private static let lastSignedInEmailKey = "lastSignedInEmail"
 
     init() {
+        personalization = Self.cachedPersonalization(ownerID: nil)
         let storedDefault = UserDefaults.standard.object(forKey: Self.defaultReminderKey) as? Int
         defaultReminderMinutes = ReminderLeadTime(rawValue: storedDefault ?? 0)?.rawValue ?? 0
         defaultEntryKind = UserDefaults.standard.string(forKey: Self.defaultEntryKindKey)
@@ -116,6 +121,9 @@ final class AccountSyncController: ObservableObject {
         await stopRealtime()
         try await client.auth.signOut(scope: .local)
         userID = nil
+        personalizationRevision += 1
+        personalization = Self.cachedPersonalization(ownerID: nil)
+        personalizationError = nil
         linkSyncError = nil
         email = nil
         state = .ready
@@ -226,9 +234,97 @@ final class AccountSyncController: ObservableObject {
         Task { await synchronize(modelContext: modelContext) }
     }
 
+    func defaultReminderMinutes(for kind: EntryKind) -> Int {
+        personalization.reminderMinutes(for: kind, fallback: defaultReminderMinutes)
+    }
+
+    /// Appearance metadata is merged by Auth; no task/profile schema migration.
+    func setAvatar(_ avatar: ProfileAvatar) async throws {
+        var updated = personalization
+        updated.avatar = avatar
+        try await savePersonalization(updated, metadata: [
+            "norka_avatar": .object(["animal": .string(avatar.animal.rawValue), "tint": .string(avatar.tint.rawValue)])
+        ])
+    }
+
+    func setDefaultEventReminderMinutes(_ minutes: Int) async throws {
+        guard ReminderLeadTime(rawValue: minutes) != nil else { return }
+        var updated = personalization
+        updated.eventReminderMinutes = minutes
+        try await savePersonalization(updated, metadata: ["norka_event_reminder_minutes": .integer(minutes)])
+    }
+
+    private func savePersonalization(_ updated: ProfilePersonalization, metadata: [String: AnyJSON]) async throws {
+        guard !isSavingPersonalization else { throw AccountSyncError.personalizationBusy }
+        let ownerID = userID
+        personalizationRevision += 1
+        isSavingPersonalization = true
+        defer { isSavingPersonalization = false }
+        do {
+            var saved = updated
+            if let client, ownerID != nil {
+                let user = try await client.auth.update(user: UserAttributes(data: metadata))
+                saved = Self.personalization(from: user.userMetadata)
+            }
+            guard userID == ownerID else { return }
+            personalization = saved
+            cachePersonalization()
+            personalizationError = nil
+            if let realtimeChannel {
+                try? await realtimeChannel.broadcast(event: "profile_changed", message: ["device_id": deviceID])
+            }
+        } catch {
+            if userID == ownerID { personalizationError = "Не удалось сохранить настройки профиля" }
+            throw error
+        }
+    }
+
+    func refreshPersonalization() async {
+        guard let client, let ownerID = userID, !isSavingPersonalization else { return }
+        let revision = personalizationRevision
+        do {
+            let user = try await client.auth.user()
+            guard userID == ownerID, user.id.uuidString.lowercased() == ownerID,
+                  revision == personalizationRevision, !isSavingPersonalization else { return }
+            personalization = Self.personalization(from: user.userMetadata)
+            cachePersonalization()
+            personalizationError = nil
+        } catch {
+            if userID == ownerID { personalizationError = "Не удалось обновить профиль. Сохранён локальный аватар." }
+        }
+    }
+
+    private static func personalization(from metadata: [String: AnyJSON]) -> ProfilePersonalization {
+        let avatar = metadata["norka_avatar"]?.objectValue
+        let minutes = metadata["norka_event_reminder_minutes"]?.intValue
+        return ProfilePersonalization(
+            avatar: ProfileAvatar(animal: avatar?["animal"]?.stringValue, tint: avatar?["tint"]?.stringValue),
+            eventReminderMinutes: minutes.flatMap { ReminderLeadTime(rawValue: $0)?.rawValue }
+        )
+    }
+
+    private static func personalizationKey(_ ownerID: String?) -> String { "norka.profile.\(ownerID ?? "local")" }
+
+    private static func cachedPersonalization(ownerID: String?) -> ProfilePersonalization {
+        guard !VoiceReviewTesting.usesIsolatedStorage,
+              let data = UserDefaults.standard.data(forKey: personalizationKey(ownerID)),
+              let value = try? JSONDecoder().decode(ProfilePersonalization.self, from: data) else { return .init() }
+        return value
+    }
+
+    private func cachePersonalization() {
+        guard !VoiceReviewTesting.usesIsolatedStorage,
+              let data = try? JSONEncoder().encode(personalization) else { return }
+        UserDefaults.standard.set(data, forKey: Self.personalizationKey(userID))
+    }
+
     func setDefaultReminderMinutes(_ minutes: Int) async throws {
         guard let normalized = ReminderLeadTime(rawValue: minutes)?.rawValue else { return }
         let previousValue = defaultReminderMinutes
+        // Migrate the shared legacy default lazily, before the two controls diverge.
+        if personalization.eventReminderMinutes == nil {
+            try await setDefaultEventReminderMinutes(previousValue)
+        }
 
         defaultReminderMinutes = normalized
         UserDefaults.standard.set(normalized, forKey: Self.defaultReminderKey)
@@ -323,14 +419,18 @@ final class AccountSyncController: ObservableObject {
             linkSyncError = nil
         }
         self.userID = nextUserID
+        personalizationRevision += 1
+        personalization = Self.cachedPersonalization(ownerID: nextUserID)
         self.email = email
         rememberEmail(email)
         state = .ready
         await loadProfileSettings(userID: nextUserID)
+        await refreshPersonalization()
     }
 
     private func setCachedSession(userID: UUID, email: String?) {
         self.userID = userID.uuidString.lowercased()
+        personalization = Self.cachedPersonalization(ownerID: self.userID)
         self.email = email
         rememberEmail(email)
         state = .ready
@@ -384,6 +484,7 @@ final class AccountSyncController: ObservableObject {
             $0.broadcast.acknowledgeBroadcasts = true
         }
         let broadcastEvents = channel.broadcastStream(event: "tasks_changed")
+        let profileEvents = channel.broadcastStream(event: "profile_changed")
         let databaseEvents = channel.postgresChange(
             AnyAction.self,
             schema: "public",
@@ -403,6 +504,12 @@ final class AccountSyncController: ObservableObject {
             try await channel.subscribeWithError()
 
             realtimeListenerTasks = [
+                Task { [weak self] in
+                    for await _ in profileEvents {
+                        guard !Task.isCancelled else { break }
+                        await self?.refreshPersonalization()
+                    }
+                },
                 Task { [weak self] in
                     for await _ in broadcastEvents {
                         guard !Task.isCancelled else { break }
@@ -577,6 +684,7 @@ struct RemoteVoiceInterpretation: Decodable {
 enum AccountSyncError: LocalizedError {
     case notConfigured
     case authenticationRequired
+    case personalizationBusy
 
     var errorDescription: String? {
         switch self {
@@ -584,6 +692,8 @@ enum AccountSyncError: LocalizedError {
             "Supabase ещё не подключён к приложению."
         case .authenticationRequired:
             "Для облачного улучшения голоса нужно войти в аккаунт."
+        case .personalizationBusy:
+            "Дождитесь сохранения настроек профиля."
         }
     }
 }
