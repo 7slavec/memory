@@ -186,7 +186,8 @@ struct ContentView: View {
 #if os(iOS)
     @State private var isKeyboardVisible = false
     @State private var isMobileProfilePresented = false
-    @State private var isMobileArchivePresented = false
+    @State private var mobileProfilePage = ProfilePage.profile
+    private var isMobileArchivePresented: Bool { mobileProfilePage == .archive }
 #endif
 
     var body: some View {
@@ -841,10 +842,6 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var desktopArchiveContent: some View {
-        HStack {
-            Spacer()
-            ArchiveClearButton(itemIDs: completedItems.map(\.id), onClear: clearArchive)
-        }
         if searchedCompletedItems.isEmpty {
             RecordsEmptyView(
                 icon: archiveSearchTextIsEmpty ? "archivebox" : "magnifyingglass",
@@ -859,6 +856,24 @@ struct ContentView: View {
     }
 
     private var desktopArchiveSearchField: some View {
+        HStack(spacing: 10) {
+            desktopArchiveSearchInput
+            ArchiveClearButton(itemIDs: completedItems.map(\.id), onClear: clearArchive)
+        }
+    }
+
+    private var desktopProfileArchivePage: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                desktopArchiveSearchField
+                desktopArchiveContent
+            }
+            .frame(maxWidth: 620).padding(.horizontal, 22).padding(.vertical, 24)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var desktopArchiveSearchInput: some View {
         HStack(spacing: 11) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
@@ -892,7 +907,7 @@ struct ContentView: View {
 
     private var desktopProfilePage: some View {
         ProfileScreen(archiveCount: completedItems.count,
-                      onOpenArchive: { selectDesktopSection(.archive) },
+                      archiveContent: AnyView(desktopProfileArchivePage),
                       onSignIn: { isAccountPresented = true })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -921,9 +936,9 @@ struct ContentView: View {
     private var mobileMainLayout: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if !isMobileProfilePresented || isMobileArchivePresented {
-                    mobilePersistentHeader
-                }
+                mobilePersistentHeader
+                    .frame(height: MemoryMotion.mobileHeaderHeight)
+                    .transaction { $0.animation = nil }
 
                 GeometryReader { proxy in
                     ZStack {
@@ -960,10 +975,7 @@ struct ContentView: View {
                             .zIndex(2)
 
                             mobileRecordsContent
-                                .opacity(selectedSection == .all ? 1 : 0)
-                                .offset(x: selectedSection == .all || reduceMotion ? 0 : -24)
-                                .allowsHitTesting(selectedSection == .all)
-                                .accessibilityHidden(selectedSection != .all)
+                                .memoryPageVisibility(selectedSection == .all, hiddenX: -MemoryMotion.pageDistance)
                                 .zIndex(1)
                         }
                         .overlay(alignment: .top) {
@@ -981,14 +993,10 @@ struct ContentView: View {
                                     .zIndex(10)
                             }
                         }
-                        .offset(x: isMobileProfilePresented ? -proxy.size.width : 0)
-                        .allowsHitTesting(!isMobileProfilePresented)
-                        .accessibilityHidden(isMobileProfilePresented)
+                        .memoryPageVisibility(!isMobileProfilePresented, hiddenX: -MemoryMotion.pageDistance)
 
                         mobileProfileDestinationContent
-                            .offset(x: isMobileProfilePresented ? 0 : proxy.size.width)
-                            .allowsHitTesting(isMobileProfilePresented)
-                            .accessibilityHidden(!isMobileProfilePresented)
+                            .memoryPageVisibility(isMobileProfilePresented, hiddenX: MemoryMotion.pageDistance)
                     }
                     .clipped()
                     .contentShape(Rectangle())
@@ -998,7 +1006,6 @@ struct ContentView: View {
             .toolbar(.hidden, for: .navigationBar)
             .background(MemoryTheme.background.ignoresSafeArea())
         }
-        .animation(.easeOut(duration: 0.18), value: isKeyboardVisible)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             isKeyboardVisible = true
         }
@@ -1008,8 +1015,8 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var mobilePersistentHeader: some View {
-        if isMobileArchivePresented {
-            mobileSecondaryHeader(title: "Архив", backAction: handleMobileProfileBack)
+        if isMobileProfilePresented {
+            mobileSecondaryHeader(title: mobileProfilePage.rawValue, backAction: handleMobileProfileBack)
                 .transition(.opacity)
         } else if isInboxPresented && !isMobileProfilePresented {
             mobileSecondaryHeader(title: "Входящие", backAction: closeInbox)
@@ -1136,12 +1143,10 @@ struct ContentView: View {
         GeometryReader { proxy in
             ZStack {
                 mobileDatedRecordsContent
-                    .offset(x: isInboxPresented ? -proxy.size.width : 0)
-                    .allowsHitTesting(!isInboxPresented)
+                    .memoryPageVisibility(!isInboxPresented, hiddenX: -MemoryMotion.pageDistance)
 
                 mobileInboxContent
-                    .offset(x: isInboxPresented ? 0 : proxy.size.width)
-                    .allowsHitTesting(isInboxPresented)
+                    .memoryPageVisibility(isInboxPresented, hiddenX: MemoryMotion.pageDistance)
             }
             .clipped()
         }
@@ -1237,36 +1242,24 @@ struct ContentView: View {
     }
 
     private var mobileProfileDestinationContent: some View {
-        GeometryReader { proxy in
-            ZStack {
-                mobileProfileContent
-                    .offset(x: isMobileArchivePresented ? -proxy.size.width : 0)
-                    .allowsHitTesting(!isMobileArchivePresented)
-
-                mobileArchiveContent
-                    .offset(x: isMobileArchivePresented ? 0 : proxy.size.width)
-                    .allowsHitTesting(isMobileArchivePresented)
-            }
-            .clipped()
-        }
-        .background(MemoryTheme.background)
+        mobileProfileContent
     }
 
     private var mobileProfileContent: some View {
         ProfileScreen(archiveCount: completedItems.count,
-                      isVisible: isMobileProfilePresented && !isMobileArchivePresented,
-                      onBack: closeMobileProfile,
-                      onOpenArchive: openMobileArchive,
+                      isVisible: isMobileProfilePresented,
+                      navigation: $mobileProfilePage,
+                      showsHeader: false,
+                      archiveContent: AnyView(mobileArchiveContent),
                       onSignIn: { isAccountPresented = true })
     }
     private var mobileArchiveContent: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Spacer()
+                HStack(spacing: 10) {
+                    archiveSearchField
                     ArchiveClearButton(itemIDs: completedItems.map(\.id), onClear: clearArchive)
                 }
-                archiveSearchField
 
                 if searchedCompletedItems.isEmpty {
                     RecordsEmptyView(
@@ -1392,53 +1385,35 @@ struct ContentView: View {
         requestVoiceReviewExit {
             dismissAppKeyboard()
             isInboxPresented = false
-            withAnimation(reduceMotion ? nil : .snappy(duration: 0.24, extraBounce: 0)) {
-                selectedSection = section
-            }
+            selectedSection = section
         }
     }
 
     private func openInbox() {
         guard selectedSection == .all, !isInboxPresented else { return }
         dismissAppKeyboard()
-        withAnimation(.easeOut(duration: 0.18)) {
-            isInboxPresented = true
-        }
+        isInboxPresented = true
     }
 
     private func closeInbox() {
         guard isInboxPresented else { return }
         dismissAppKeyboard()
-        withAnimation(.easeOut(duration: 0.18)) {
-            isInboxPresented = false
-        }
+        isInboxPresented = false
     }
 
     private func openMobileProfile() {
         guard !isMobileProfilePresented else { return }
         requestVoiceReviewExit {
             dismissAppKeyboard()
-            isMobileArchivePresented = false
-            withAnimation(.easeInOut(duration: 0.24)) {
-                isMobileProfilePresented = true
-            }
-        }
-    }
-
-    private func openMobileArchive() {
-        guard isMobileProfilePresented, !isMobileArchivePresented else { return }
-        dismissAppKeyboard()
-        withAnimation(.easeOut(duration: 0.18)) {
-            isMobileArchivePresented = true
+            mobileProfilePage = .profile
+            isMobileProfilePresented = true
         }
     }
 
     private func handleMobileProfileBack() {
-        if isMobileArchivePresented {
+        if mobileProfilePage != .profile {
             dismissAppKeyboard()
-            withAnimation(.easeOut(duration: 0.18)) {
-                isMobileArchivePresented = false
-            }
+            mobileProfilePage = .profile
         } else {
             closeMobileProfile()
         }
@@ -1447,9 +1422,7 @@ struct ContentView: View {
     private func closeMobileProfile() {
         guard isMobileProfilePresented else { return }
         dismissAppKeyboard()
-        withAnimation(.easeInOut(duration: 0.24)) {
-            isMobileProfilePresented = false
-        }
+        isMobileProfilePresented = false
     }
 
     private var homePriorityItem: Item? {

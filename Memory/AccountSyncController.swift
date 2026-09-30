@@ -243,7 +243,8 @@ final class AccountSyncController: ObservableObject {
         var updated = personalization
         updated.avatar = avatar
         try await savePersonalization(updated, metadata: [
-            "norka_avatar": .object(["animal": .string(avatar.animal.rawValue), "tint": .string(avatar.tint.rawValue)])
+            "norka_avatar": .object(["animal": .string(avatar.animal.rawValue),
+                                    "tint": .string(avatar.tint.rawValue), "fur": .string(avatar.fur.rawValue)])
         ])
     }
 
@@ -298,7 +299,8 @@ final class AccountSyncController: ObservableObject {
         let avatar = metadata["norka_avatar"]?.objectValue
         let minutes = metadata["norka_event_reminder_minutes"]?.intValue
         return ProfilePersonalization(
-            avatar: ProfileAvatar(animal: avatar?["animal"]?.stringValue, tint: avatar?["tint"]?.stringValue),
+            avatar: ProfileAvatar(animal: avatar?["animal"]?.stringValue, tint: avatar?["tint"]?.stringValue,
+                                  fur: avatar?["fur"]?.stringValue),
             eventReminderMinutes: minutes.flatMap { ReminderLeadTime(rawValue: $0)?.rawValue }
         )
     }

@@ -183,9 +183,7 @@ struct QuickCaptureCard: View {
 #else
             if isHome {
                 homeBody
-                    .opacity(isRecordsPage ? 0 : 1)
-                    .allowsHitTesting(!isRecordsPage)
-                    .accessibilityHidden(isRecordsPage)
+                    .memoryPageVisibility(!isRecordsPage)
             } else {
                 compactBody
             }
@@ -214,9 +212,7 @@ struct QuickCaptureCard: View {
                         MemoryTheme.background
                             .ignoresSafeArea(edges: .bottom)
                     }
-                    .opacity(!isRecordsPage || isRecordsComposerPresented ? 1 : 0)
-                    .allowsHitTesting(!isRecordsPage || isRecordsComposerPresented)
-                    .accessibilityHidden(isRecordsPage && !isRecordsComposerPresented)
+                    .memoryPageVisibility(!isRecordsPage || isRecordsComposerPresented)
                 }
         }
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)

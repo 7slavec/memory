@@ -10,8 +10,15 @@ struct ArchiveClearButton: View {
         Button {
             pendingIDs = Set(itemIDs)
             showsConfirmation = true
-        } label: { Label("Очистить архив", systemImage: "trash") }
-            .buttonStyle(MemoryActionStyle())
+        } label: {
+            Image(systemName: "trash").font(.system(size: 18, weight: .regular))
+                .frame(width: 48, height: 48)
+                .background(MemoryTheme.card, in: Circle())
+                .contentShape(Circle())
+        }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Очистить архив")
+            .help("Очистить архив")
             .disabled(itemIDs.isEmpty)
             .confirmationDialog("Удалить записи из архива?", isPresented: $showsConfirmation, titleVisibility: .visible) {
                 Button("Удалить все (\(pendingIDs.count))", role: .destructive) { onClear(pendingIDs) }

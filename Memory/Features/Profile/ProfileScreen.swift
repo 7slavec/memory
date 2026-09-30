@@ -2,60 +2,77 @@ import SwiftUI
 import SwiftData
 
 struct ProfileScreen: View {
-    private enum Page: String { case profile = "Профиль", notifications = "Уведомления", sync = "Синхронизация" }
     @EnvironmentObject private var account: AccountSyncController
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var page = Page.profile
+    @State private var localPage = ProfilePage.profile
     @State private var showsAvatar = false
-    @State private var showsVoiceLab = false
     @State private var isWorking = false
     @State private var error: String?
     let archiveCount: Int
     var isVisible = true
     var onBack: (() -> Void)? = nil
     var onOpenArchive: (() -> Void)? = nil
+    var navigation: Binding<ProfilePage>? = nil
+    var showsHeader = true
+    var archiveContent: AnyView? = nil
     let onSignIn: () -> Void
+
+    private var page: ProfilePage { navigation?.wrappedValue ?? localPage }
+    private func navigate(_ destination: ProfilePage) {
+        if let navigation { navigation.wrappedValue = destination }
+        else { localPage = destination }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            ScrollView {
-                Group {
-                    switch page {
-                    case .profile: overview
-                    case .notifications: ProfileNotificationsPage()
-                    case .sync: synchronization
+            if showsHeader { header }
+            ZStack(alignment: .topLeading) {
+                profileScroll { overview }
+                    .memoryPageVisibility(page == .profile, hiddenX: -MemoryMotion.pageDistance)
+                if page != .profile {
+                    Group {
+                        switch page {
+                        case .profile: EmptyView()
+                        case .notifications: profileScroll { ProfileNotificationsPage() }
+                        case .sync: profileScroll { synchronization }
+                        case .archive: archiveContent
+                        case .voiceLab: VoiceLabView(showsHeader: false) { navigate(.profile) }
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .id(page)
+                    .transition(MemoryMotion.forward(reduceMotion: reduceMotion))
                 }
-                .frame(maxWidth: 560)
-                .padding(.horizontal, 22).padding(.top, 24).padding(.bottom, 32)
-                .frame(maxWidth: .infinity)
-                .transition(.opacity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .clipped()
+            .animation(MemoryMotion.page(reduceMotion: reduceMotion), value: page)
         }
         .background(MemoryTheme.background)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: page)
         .task(id: isVisible) {
             guard isVisible else { return }
             await account.refreshPersonalization()
         }
-        .onChange(of: isVisible) { _, visible in if !visible { page = .profile } }
+        .onChange(of: isVisible) { _, visible in if !visible { navigate(.profile) } }
         .alert("Не получилось", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(error ?? "") }
-#if os(macOS)
-        .sheet(isPresented: $showsVoiceLab) { VoiceLabView { showsVoiceLab = false } }
-#else
-        .fullScreenCover(isPresented: $showsVoiceLab) { VoiceLabView { showsVoiceLab = false } }
-#endif
+    }
+
+    private func profileScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            content().frame(maxWidth: 560)
+                .padding(.horizontal, 22).padding(.top, 24).padding(.bottom, 32)
+                .frame(maxWidth: .infinity)
+        }
     }
 
     private var header: some View {
         HStack {
             if page != .profile || onBack != nil {
                 Button {
-                    if page == .profile { onBack?() } else { page = .profile }
+                    if page == .profile { onBack?() } else { navigate(.profile) }
                 } label: {
                     Image(systemName: "arrow.left").font(.system(size: 18))
                         .frame(width: 44, height: 44).background(MemoryTheme.card, in: Circle())
@@ -82,16 +99,25 @@ struct ProfileScreen: View {
                 }
                 .buttonStyle(.plain).accessibilityLabel("Изменить аватар")
                 .popover(isPresented: $showsAvatar, arrowEdge: .top) {
-                    AvatarEditor(avatar: account.personalization.avatar)
+#if os(iOS)
+                    ScrollView {
+                        AvatarEditor(avatar: account.personalization.avatar)
+                            .frame(maxWidth: .infinity)
+                    }
+                        .scrollBounceBehavior(.basedOnSize)
                         .presentationCompactAdaptation(.sheet)
                         .presentationBackground(MemoryTheme.card)
-                        .presentationDetents([.height(400)])
+                        .presentationDetents([.height(360), .large])
                         .presentationDragIndicator(.visible)
+#else
+                    AvatarEditor(avatar: account.personalization.avatar)
+                        .presentationBackground(MemoryTheme.card)
+#endif
                 }
                 Text(account.email ?? "Локальный профиль")
                     .font(.system(size: 22, weight: .medium)).multilineTextAlignment(.center)
                     .textSelection(.enabled)
-                Button { page = .sync } label: {
+                Button { navigate(.sync) } label: {
                     Label(account.profileStatusText, systemImage: account.profileSyncSymbol)
                         .font(.system(size: 13)).foregroundStyle(account.profileHasSyncError ? MemoryTheme.danger : .secondary)
                 }
@@ -100,15 +126,17 @@ struct ProfileScreen: View {
             .frame(maxWidth: .infinity).padding(.bottom, 16)
 
             VStack(spacing: 0) {
-                ProfileNavigationRow(title: "Уведомления", icon: "bell") { page = .notifications }
+                ProfileNavigationRow(title: "Уведомления", icon: "bell") { navigate(.notifications) }
                 ProfileThemePicker()
             }.memoryCard()
 
             VStack(spacing: 0) {
-                if let onOpenArchive {
-                    ProfileNavigationRow(title: "Архив", icon: "archivebox", value: archiveCount == 0 ? nil : "\(archiveCount)", action: onOpenArchive)
+                if archiveContent != nil || onOpenArchive != nil {
+                    ProfileNavigationRow(title: "Архив", icon: "archivebox", value: archiveCount == 0 ? nil : "\(archiveCount)") {
+                        if archiveContent != nil { navigate(.archive) } else { onOpenArchive?() }
+                    }
                 }
-                ProfileNavigationRow(title: "Voice Lab", icon: "waveform") { showsVoiceLab = true }
+                ProfileNavigationRow(title: "Voice Lab", icon: "waveform") { navigate(.voiceLab) }
             }.memoryCard()
 
             Button {

@@ -4,12 +4,11 @@ struct ProfileAvatarView: View {
     let avatar: ProfileAvatar
     var size: CGFloat = 88
     var body: some View {
-        Image(systemName: avatar.animal.symbol)
-            .font(.system(size: size * 0.48, weight: .medium))
-            .foregroundStyle(Color(red: 0.10, green: 0.12, blue: 0.10))
+        AnimalFace(animal: avatar.animal, fur: avatar.fur)
+            .padding(size * 0.17)
             .frame(width: size, height: size)
             .background(avatar.tint.color, in: Circle())
-            .accessibilityLabel("\(avatar.animal.title), \(avatar.tint.title)")
+            .accessibilityLabel("\(avatar.animal.title), \(avatar.fur.title), фон \(avatar.tint.title)")
     }
 }
 

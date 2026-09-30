@@ -13,10 +13,12 @@ struct VoiceLabView: View {
     @AppStorage(VoicePipelineSettings.personalLearningEnabledKey)
     private var isPersonalVoiceLearningEnabled = false
 
+    var showsHeader = true
     let onClose: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
+            if showsHeader {
             HStack(spacing: 14) {
                 Button(action: onClose) {
                     Image(systemName: "chevron.left")
@@ -32,6 +34,7 @@ struct VoiceLabView: View {
             }
             .padding(.horizontal, 22)
             .frame(height: 88)
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -48,6 +51,7 @@ struct VoiceLabView: View {
         .background(MemoryTheme.background.ignoresSafeArea())
         .tint(MemoryTheme.accent)
         .onAppear {
+            guard !VoiceReviewTesting.usesIsolatedStorage else { return }
             isStructuredInterpreterEnabled = true
             store.refresh()
             statistics = VoiceLabStatistics(examples: store.examples)

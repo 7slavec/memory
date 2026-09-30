@@ -3,7 +3,7 @@ import SwiftUI
 extension View {
     func recordLinksPopup(item: Item, isPresented: Binding<Bool>, onOpen: @escaping (Item) -> Void) -> some View {
         overlayPreferenceValue(MemoryLinkControlAnchor.self) { anchor in
-            MemoryAnchoredPopover(isPresented: isPresented, source: anchor) {
+            MemoryAnchoredPopover(isPresented: isPresented, source: anchor, fastPresentation: true) {
             RecordLinksPopupContent(item: item, onOpen: onOpen)
 #if os(macOS)
                 .frame(width: 360)

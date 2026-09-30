@@ -11,21 +11,25 @@ struct AvatarEditor: View {
     init(avatar: ProfileAvatar) { _selection = State(initialValue: avatar) }
 
     var body: some View {
-        VStack(spacing: 20) {
-            ProfileAvatarView(avatar: selection, size: 96)
-                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-            HStack(spacing: 16) {
+        VStack(spacing: 16) {
+            ProfileAvatarView(avatar: selection, size: 80)
+            HStack(spacing: 12) {
                 ForEach(ProfileAnimal.allCases) { animal in
-                    Button { selection.animal = animal } label: {
-                        Image(systemName: animal.symbol).font(.system(size: 24))
-                            .frame(width: 56, height: 52)
+                    Button { selection.select(animal) } label: {
+                        AnimalFace(animal: animal, fur: selection.fur)
+                            .frame(width: 36, height: 36)
+                            .frame(width: 64, height: 56)
                             .background(selection.animal == animal ? MemoryTheme.raised : .clear,
                                         in: RoundedRectangle(cornerRadius: 16))
                     }
                     .buttonStyle(.plain).accessibilityLabel(animal.title)
                     .accessibilityAddTraits(selection.animal == animal ? .isSelected : [])
+                    .accessibilityHint("Повторное нажатие меняет цвет персонажа")
+                    .accessibilityValue(selection.animal == animal ? selection.fur.title : "")
                 }
             }
+            Text("Повторное нажатие — другой цвет")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 4) { colorOptions }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 4) {
@@ -48,8 +52,9 @@ struct AvatarEditor: View {
             }
             .buttonStyle(MemoryActionStyle(prominent: true))
         }
-        .disabled(isSaving).padding(24).frame(idealWidth: 336, maxWidth: 336)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: selection)
+        .disabled(isSaving).padding(16).frame(idealWidth: 320, maxWidth: 320)
+        .fixedSize(horizontal: false, vertical: true)
+        .animation(reduceMotion ? nil : MemoryMotion.panel, value: selection)
         .interactiveDismissDisabled(isSaving)
         .accessibilityIdentifier("avatarEditor")
     }

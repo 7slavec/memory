@@ -17,7 +17,7 @@
 | Несколько записей | автосоздание валидных результатов → компактный список → редактор отдельной записи → список → готово / сохранить изменения / отменить создание | `VoiceBatchReviewView.swift`, `Features/VoiceReview/VoiceBatchReviewSession.swift`; persistence — `ContentView` |
 | Все записи | поиск → Просрочено / Сегодня / Завтра / На неделе / Позже → редактор | `ContentView`: `allItemsContent`, `AllItemsGroup`, `taskRows` |
 | Входящие | все записи → входящие без срока → редактор → назад | `ContentView`: `mobileInboxContent`, `desktopInboxContent` |
-| Профиль | аватар и почта / локальный профиль → настройки / вход / архив / Voice Lab | iPhone: `ContentView.mobileProfileContent`; Mac: `AccountView.desktopProfileView` |
+| Профиль | аватар и почта / локальный профиль → настройки / вход / архив / Voice Lab | `Features/Profile/ProfileScreen`, `ProfilePage`; общий интерфейс iPhone/Mac |
 | Архив | профиль на iPhone / боковая панель Mac → выполненные и прошедшие события → запись | `ContentView`: `mobileArchiveContent`, `desktopArchiveContent`, `completedItems` |
 | Редактор | заголовок, описание, тип, расписание, уведомления, действия → сохранить / назад | `ItemEditorView.swift` |
 | Ручные связи | существующая запись → связанные записи → выбрать / открыть / снять связь | `Features/Links`, `Domain/Links`; контракт — `docs/MANUAL-LINKS.md` |
@@ -49,7 +49,8 @@
 | Кнопка | Текстовая с необязательной иконкой / иконочная; ограниченные S/M/L с закреплённым назначением | Общая реализация ещё не создана; точные размеры не согласованы |
 | Плашка | По содержимому, общая высота/типографика, необязательная иконка и дополнительное действие | `DesignSystem/Components/EntryChips.swift`; объединение внешней основы ещё предстоит |
 | Строка настройки | Общая основа, необязательная иконка; справа переключатель / значение выбора / переход | Пока отдельные реализации профиля и редактора |
-| Аватар | Один компонент, размеры для шапки, профиля, панели Mac | Ещё встроен в экраны |
+| Аватар | Общие мордочки, шесть фонов, три цвета персонажа | `ProfileAvatarView`, `AnimalFace`, `Features/Profile/AvatarEditor` |
+| Движение | Постоянная шапка; горизонтальный переход + opacity, Reduce Motion | `DesignSystem/MemoryMotion.swift`; точные правила — FLOW-REDESIGN.md |
 | Календарь | Единая логика выбора и открытия во всех точках одной платформы; необязательное действие не создаёт новый календарь | `DesignSystem/Schedule/MemoryCalendarPicker.swift`, `MobileSchedulePickerSheet.swift`; визуальная переработка ещё не выполнена |
 | Выбор времени | Отдельное семейство, единая семантика выбора, закрытия и ограничения диапазона | `DesignSystem/Schedule/MemoryTimePicker.swift`, мобильная часть в `MobileSchedulePickerSheet.swift` |
 

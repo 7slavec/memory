@@ -5,6 +5,7 @@ import SwiftUI
 struct MemoryAnchoredPopover<Panel: View>: View {
     @Binding var isPresented: Bool
     let source: Anchor<CGRect>?
+    var fastPresentation = false
     @ViewBuilder var panel: () -> Panel
 
     var body: some View {
@@ -13,9 +14,27 @@ struct MemoryAnchoredPopover<Panel: View>: View {
             Color.clear
                 .allowsHitTesting(false)
                 .popover(isPresented: $isPresented, attachmentAnchor: .rect(.rect(rect)), arrowEdge: .bottom) {
-                    panel()
+                    if fastPresentation {
+                        MemoryFastPanel { panel() }
+                    } else { panel() }
+                }
+                .transaction {
+                    // Native shell has no configurable duration. Avoid stacking its animation
+                    // with our short content fade; leave all non-opted-in pickers unchanged.
+                    if fastPresentation { $0.disablesAnimations = true }
                 }
         }
+    }
+}
+
+private struct MemoryFastPanel<Content: View>: View {
+    @State private var visible = false
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        content()
+            .opacity(visible ? 1 : 0)
+            .onAppear { withAnimation(MemoryMotion.panel) { visible = true } }
+            .transaction { $0.disablesAnimations = false }
     }
 }
 

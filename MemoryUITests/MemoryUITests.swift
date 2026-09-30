@@ -21,11 +21,16 @@ final class MemoryUITests: XCTestCase {
         XCTAssertTrue(avatar.waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["Создание"].exists)
         XCTAssertFalse(app.staticTexts["Оформление"].exists)
+#if os(iOS)
+        let headerY = app.buttons["Назад"].frame.midY
+#endif
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "Shared Flow profile"; shot.lifetime = .keepAlways; add(shot)
         avatar.tap()
         XCTAssertTrue(app.buttons["Пёс"].waitForExistence(timeout: 5))
         app.buttons["Пёс"].tap()
+        app.buttons["Пёс"].tap()
+        XCTAssertEqual(app.buttons["Пёс"].value as? String, "Какао")
         app.buttons["Мята"].tap()
         let editor = XCTAttachment(screenshot: app.screenshot())
         editor.name = "Avatar mini editor"; editor.lifetime = .keepAlways; add(editor)
@@ -34,8 +39,33 @@ final class MemoryUITests: XCTestCase {
         app.buttons["Уведомления"].tap()
         XCTAssertTrue(app.buttons["Напоминания: время уведомления"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["События: время уведомления"].exists)
+#if os(iOS)
+        XCTAssertEqual(app.buttons["Назад"].frame.midY, headerY, accuracy: 1)
+#endif
+        let notifications = XCTAttachment(screenshot: app.screenshot())
+        notifications.name = "Notification switch light"; notifications.lifetime = .keepAlways; add(notifications)
         app.buttons["Назад"].tap()
         XCTAssertTrue(avatar.exists)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Архив")).firstMatch.tap()
+        let search = app.textFields["Поиск в архиве"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertEqual(search.frame.midY, app.buttons["Очистить архив"].frame.midY, accuracy: 4)
+#if os(iOS)
+        XCTAssertEqual(app.buttons["Назад"].frame.midY, headerY, accuracy: 1)
+#endif
+        app.buttons["Назад"].tap()
+        app.buttons["Voice Lab"].tap()
+        XCTAssertTrue(app.staticTexts["Локальный разбор"].waitForExistence(timeout: 5))
+#if os(iOS)
+        XCTAssertEqual(app.buttons["Назад"].frame.midY, headerY, accuracy: 1)
+#endif
+        app.buttons["Назад"].tap()
+        app.buttons["Тема: Тёмная"].tap()
+        app.buttons["Уведомления"].tap()
+        let dark = XCTAttachment(screenshot: app.screenshot())
+        dark.name = "Notification switch dark"; dark.lifetime = .keepAlways; add(dark)
+        app.buttons["Назад"].tap()
+        app.buttons["Тема: Система"].tap()
     }
 
 #if os(iOS)

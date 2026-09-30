@@ -27,6 +27,20 @@ struct ProfileSettingsTests {
         #expect(ProfilePersonalization(eventReminderMinutes: -999).reminderMinutes(for: .event, fallback: 15) == 15)
     }
 
+    @Test func legacyAvatarKeepsItsSelectionAndRepeatedTapCyclesOnlyFur() throws {
+        let legacy = Data(#"{"animal":"rabbit","tint":"mint"}"#.utf8)
+        var avatar = try JSONDecoder().decode(ProfileAvatar.self, from: legacy)
+        #expect(avatar == ProfileAvatar(animal: .rabbit, tint: .mint))
+        for expected in [ProfileFur.cocoa, .cream, .ink] {
+            avatar.select(.rabbit)
+            #expect(avatar.fur == expected)
+            #expect(avatar.tint == .mint)
+            #expect(try JSONDecoder().decode(ProfileAvatar.self, from: JSONEncoder().encode(avatar)) == avatar)
+        }
+        avatar.select(.cat)
+        #expect(avatar.animal == .cat && avatar.fur == .ink)
+    }
+
     @Test func clearArchiveRevalidatesOwnerAndStateWithoutPhysicallyDeletingRecords() throws {
         let container = try ModelContainer(for: Item.self, RecordLink.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))

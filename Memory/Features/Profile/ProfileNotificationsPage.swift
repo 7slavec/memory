@@ -21,7 +21,7 @@ struct ProfileNotificationsPage: View {
             VStack(spacing: 0) {
                 ProfileSettingsRow(title: "Уведомления", icon: "bell") {
                     Toggle("Уведомления", isOn: Binding(get: { enabled }, set: setEnabled))
-                        .labelsHidden().tint(MemoryTheme.accent)
+                        .labelsHidden().toggleStyle(.switch).tint(MemoryTheme.switchTint)
                 }
                 if permission == .denied {
                     ProfileNavigationRow(title: "Разрешить в системе", icon: "gearshape", action: openSettings)
