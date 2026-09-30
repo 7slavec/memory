@@ -183,21 +183,19 @@ struct QuickCaptureCard: View {
 #else
             if isHome {
                 homeBody
-                    .memoryPageVisibility(!isRecordsPage)
+                    .memoryPageVisibility(!isRecordsPage, hiddenX: MemoryMotion.pageDistance)
             } else {
                 compactBody
             }
 #endif
         }
         .overlay(alignment: .bottom) {
-            if isHome,
-               isRecordsPage,
-               !isRecordsComposerPresented,
-               !externalKeyboardVisible,
-               pendingVoiceClarification == nil {
+            if isHome {
                 sharedCaptureChrome
                     .frame(maxWidth: .infinity)
-                    .transition(.scale(scale: 0.86, anchor: .bottomTrailing).combined(with: .opacity))
+                    .memoryPageVisibility(isRecordsPage && !isRecordsComposerPresented &&
+                                          !externalKeyboardVisible && pendingVoiceClarification == nil,
+                                          hiddenX: -MemoryMotion.pageDistance)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 18) {
@@ -212,7 +210,8 @@ struct QuickCaptureCard: View {
                         MemoryTheme.background
                             .ignoresSafeArea(edges: .bottom)
                     }
-                    .memoryPageVisibility(!isRecordsPage || isRecordsComposerPresented)
+                    .memoryPageVisibility(!isRecordsPage || isRecordsComposerPresented,
+                                          hiddenX: MemoryMotion.pageDistance)
                 }
         }
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)
@@ -313,38 +312,32 @@ struct QuickCaptureCard: View {
     }
 
 
-    @ViewBuilder private var sharedCaptureChrome: some View {
-        if isRecordsPage && !isRecordsComposerPresented {
-            if !externalKeyboardVisible {
-                HStack {
-                    Spacer(minLength: 0)
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.22)) {
-                            isRecordsComposerPresented = true
-                        }
-                        DispatchQueue.main.async {
-                            focusedField = .title
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(MemoryTheme.onAccent)
-                            .frame(width: 58, height: 58)
-                            .background(MemoryTheme.accent)
-                            .clipShape(Circle())
-                            .overlay {
-                                Circle().stroke(MemoryTheme.onAccent.opacity(0.16), lineWidth: 1)
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Добавить напоминание")
-                    .zIndex(20)
+    private var sharedCaptureChrome: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Button {
+                withAnimation(MemoryMotion.page(reduceMotion: reduceMotion)) {
+                    isRecordsComposerPresented = true
                 }
-                .frame(maxWidth: 620)
-                .padding(.horizontal, 22)
-                .padding(.bottom, 10)
+                DispatchQueue.main.async { focusedField = .title }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(MemoryTheme.onAccent)
+                    .frame(width: 58, height: 58)
+                    .background(MemoryTheme.accent)
+                    .clipShape(Circle())
+                    .overlay {
+                        Circle().stroke(MemoryTheme.onAccent.opacity(0.16), lineWidth: 1)
+                    }
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Добавить напоминание")
+            .zIndex(20)
         }
+        .frame(maxWidth: 620)
+        .padding(.horizontal, 22)
+        .padding(.bottom, 10)
     }
 
 #if os(macOS)

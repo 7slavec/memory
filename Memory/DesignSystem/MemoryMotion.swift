@@ -21,11 +21,14 @@ private struct MemoryPageVisibility: ViewModifier {
     let hiddenX: CGFloat
     func body(content: Content) -> some View {
         content
-            .animation(MemoryMotion.page(reduceMotion: reduceMotion)) {
-                $0.opacity(visible ? 1 : 0)
-                    .offset(x: visible || reduceMotion ? 0 : hiddenX)
-            }
+            // The page owns its transform, not the layout/controls inside it.
+            // Keep the value-driven timing identical to profile push transitions.
+            .transaction { $0.animation = nil }
+            .opacity(visible ? 1 : 0)
+            .offset(x: visible || reduceMotion ? 0 : hiddenX)
+            .animation(MemoryMotion.page(reduceMotion: reduceMotion), value: visible)
             .allowsHitTesting(visible)
+            .disabled(!visible)
             .accessibilityHidden(!visible)
     }
 }

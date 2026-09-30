@@ -31,7 +31,7 @@ struct ProfileSettingsTests {
         let legacy = Data(#"{"animal":"rabbit","tint":"mint"}"#.utf8)
         var avatar = try JSONDecoder().decode(ProfileAvatar.self, from: legacy)
         #expect(avatar == ProfileAvatar(animal: .rabbit, tint: .mint))
-        for expected in [ProfileFur.cocoa, .cream, .ink] {
+        for expected in [ProfileFur.cobalt, .cream, .ink] {
             avatar.select(.rabbit)
             #expect(avatar.fur == expected)
             #expect(avatar.tint == .mint)
@@ -39,6 +39,9 @@ struct ProfileSettingsTests {
         }
         avatar.select(.cat)
         #expect(avatar.animal == .cat && avatar.fur == .ink)
+        let brown = Data(#"{"animal":"dog","tint":"lilac","fur":"cocoa"}"#.utf8)
+        #expect(try JSONDecoder().decode(ProfileAvatar.self, from: brown) ==
+                ProfileAvatar(animal: .dog, tint: .lilac, fur: .cobalt))
     }
 
     @Test func clearArchiveRevalidatesOwnerAndStateWithoutPhysicallyDeletingRecords() throws {

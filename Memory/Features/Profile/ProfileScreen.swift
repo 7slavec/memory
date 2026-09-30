@@ -107,7 +107,7 @@ struct ProfileScreen: View {
                         .scrollBounceBehavior(.basedOnSize)
                         .presentationCompactAdaptation(.sheet)
                         .presentationBackground(MemoryTheme.card)
-                        .presentationDetents([.height(360), .large])
+                        .presentationDetents([.height(400), .large])
                         .presentationDragIndicator(.visible)
 #else
                     AvatarEditor(avatar: account.personalization.avatar)

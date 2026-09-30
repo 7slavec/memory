@@ -7,10 +7,10 @@ enum ProfileAnimal: String, CaseIterable, Codable, Identifiable {
 }
 
 enum ProfileFur: String, CaseIterable, Codable {
-    case ink, cocoa, cream
-    var title: String { switch self { case .ink: "Графит"; case .cocoa: "Какао"; case .cream: "Кремовый" } }
-    var hex: UInt32 { switch self { case .ink: 0x242A27; case .cocoa: 0x704735; case .cream: 0xFFF6DF } }
-    var next: Self { switch self { case .ink: .cocoa; case .cocoa: .cream; case .cream: .ink } }
+    case ink, cobalt, cream
+    var title: String { switch self { case .ink: "Графит"; case .cobalt: "Кобальт"; case .cream: "Кремовый" } }
+    var hex: UInt32 { switch self { case .ink: 0x242A27; case .cobalt: 0x2855D9; case .cream: 0xFFF6DF } }
+    var next: Self { switch self { case .ink: .cobalt; case .cobalt: .cream; case .cream: .ink } }
 }
 
 enum ProfileTint: String, CaseIterable, Codable, Identifiable {
@@ -19,13 +19,13 @@ enum ProfileTint: String, CaseIterable, Codable, Identifiable {
     var title: String {
         switch self {
         case .citrus: "Цитрус"; case .mint: "Мята"; case .sky: "Небо"
-        case .lilac: "Сирень"; case .peach: "Персик"; case .sand: "Песок"
+        case .lilac: "Сирень"; case .peach: "Персик"; case .sand: "Солнечный"
         }
     }
     var hex: UInt32 {
         switch self {
-        case .citrus: 0xE7F363; case .mint: 0x9EDBB9; case .sky: 0xA6CDF4
-        case .lilac: 0xC8B8EE; case .peach: 0xF5B397; case .sand: 0xE8D5A7
+        case .citrus: 0xE7F363; case .mint: 0x62DFAD; case .sky: 0x79C7FF
+        case .lilac: 0xB8A0FF; case .peach: 0xFFAD8E; case .sand: 0xFFD86B
         }
     }
 }
@@ -45,7 +45,8 @@ struct ProfileAvatar: Codable, Equatable {
     init(animal: String?, tint: String?, fur: String? = nil) {
         self.animal = animal.flatMap(ProfileAnimal.init(rawValue:)) ?? .cat
         self.tint = tint.flatMap(ProfileTint.init(rawValue:)) ?? .citrus
-        self.fur = fur.flatMap(ProfileFur.init(rawValue:)) ?? .ink
+        // Upgrade the retired brown without losing the saved animal or background.
+        self.fur = fur == "cocoa" ? .cobalt : fur.flatMap(ProfileFur.init(rawValue:)) ?? .ink
     }
 
     mutating func select(_ animal: ProfileAnimal) {

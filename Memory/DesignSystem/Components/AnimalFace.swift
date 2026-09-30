@@ -34,11 +34,10 @@ struct AnimalFace: View {
                 head.addRoundedRect(in: CGRect(x: 16, y: 35, width: 68, height: 55), cornerSize: CGSize(width: 30, height: 28))
             }
             head.closeSubpath()
-            // A filled shadow keeps cream characters readable on every pastel background.
-            var shadow = context
-            shadow.translateBy(x: 0, y: 1.5)
-            shadow.fill(head, with: .color(ink.opacity(0.22)))
-            context.fill(head, with: .color(coat))
+            // Filter only the silhouette, never the facial features or the background.
+            var silhouette = context
+            silhouette.addFilter(.shadow(color: ink.opacity(0.20), radius: 3, x: 0, y: 3))
+            silhouette.fill(head, with: .color(coat))
             let features = fur == .cream ? ink : Color(red: 1, green: 0.97, blue: 0.89)
             for x in [34.0, 61.0] {
                 context.fill(Path(ellipseIn: CGRect(x: x, y: 51, width: 5, height: 7)), with: .color(features))

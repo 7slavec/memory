@@ -30,7 +30,7 @@ final class MemoryUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Пёс"].waitForExistence(timeout: 5))
         app.buttons["Пёс"].tap()
         app.buttons["Пёс"].tap()
-        XCTAssertEqual(app.buttons["Пёс"].value as? String, "Какао")
+        XCTAssertEqual(app.buttons["Пёс"].value as? String, "Кобальт")
         app.buttons["Мята"].tap()
         let editor = XCTAttachment(screenshot: app.screenshot())
         editor.name = "Avatar mini editor"; editor.lifetime = .keepAlways; add(editor)
@@ -69,6 +69,52 @@ final class MemoryUITests: XCTestCase {
     }
 
 #if os(iOS)
+    @MainActor func testMainPageMotionAndLargerAvatarChoices() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-profile"]
+        app.launch()
+        let avatar = app.buttons["Изменить аватар"]
+        XCTAssertTrue(avatar.waitForExistence(timeout: 10))
+        let headerY = app.buttons["Назад"].frame.midY
+        avatar.tap()
+        let dog = app.buttons["Пёс"]
+        XCTAssertTrue(dog.waitForExistence(timeout: 5))
+        // Native sheets expose their controls before finishing presentation.
+        let fullSize = expectation(for: NSPredicate { _, _ in dog.frame.width >= 80 }, evaluatedWith: dog)
+        wait(for: [fullSize], timeout: 3)
+        XCTAssertGreaterThanOrEqual(dog.frame.width, 80)
+        XCTAssertGreaterThanOrEqual(app.buttons["Мята"].frame.width, 44)
+        XCTAssertFalse(app.staticTexts["Повторное нажатие — другой цвет"].exists)
+        dog.tap(); dog.tap()
+        XCTAssertEqual(dog.value as? String, "Кобальт")
+        app.buttons["Мята"].tap()
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Larger avatar choices"; shot.lifetime = .keepAlways; add(shot)
+        app.buttons["Готово"].tap()
+        app.buttons["Назад"].tap()
+        let orb = app.buttons["homeVoiceOrb"]
+        XCTAssertTrue(orb.waitForExistence(timeout: 5))
+        let orbFrame = orb.frame
+        let profile = app.buttons["Профиль"]
+        XCTAssertEqual(profile.frame.midY, headerY, accuracy: 1)
+        // Swipe from the orb: a page change must not also start recording.
+        orb.swipeRight()
+        XCTAssertTrue(app.buttons["На главный экран"].waitForExistence(timeout: 5))
+        XCTAssertFalse(orb.isEnabled)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@ AND enabled == true", "Добавить напоминание")).firstMatch.isHittable)
+        app.swipeLeft()
+        XCTAssertTrue(orb.waitForExistence(timeout: 5))
+        XCTAssertEqual(orb.frame.midY, orbFrame.midY, accuracy: 1)
+        XCTAssertEqual(orb.frame.width, orbFrame.width, accuracy: 1)
+        XCTAssertFalse(app.staticTexts["Говорите…"].exists)
+        profile.tap()
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["Назад"].frame.midY, headerY, accuracy: 1)
+        app.buttons["Уведомления"].tap()
+        XCTAssertTrue(app.buttons["Напоминания: время уведомления"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["Назад"].frame.midY, headerY, accuracy: 1)
+    }
+
     @MainActor func testCompactSchedulePanelKeepsMonthVisible() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-links"]

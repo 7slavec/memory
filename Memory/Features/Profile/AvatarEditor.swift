@@ -12,15 +12,18 @@ struct AvatarEditor: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            ProfileAvatarView(avatar: selection, size: 80)
+            ProfileAvatarView(avatar: selection, size: 96)
             HStack(spacing: 12) {
                 ForEach(ProfileAnimal.allCases) { animal in
                     Button { selection.select(animal) } label: {
-                        AnimalFace(animal: animal, fur: selection.fur)
-                            .frame(width: 36, height: 36)
-                            .frame(width: 64, height: 56)
-                            .background(selection.animal == animal ? MemoryTheme.raised : .clear,
-                                        in: RoundedRectangle(cornerRadius: 16))
+                        ProfileAvatarView(avatar: ProfileAvatar(animal: animal, tint: selection.tint,
+                                                              fur: selection.fur), size: 76)
+                            .padding(4)
+                            .overlay {
+                                Circle().strokeBorder(selection.animal == animal ? Color.primary : .clear,
+                                                      lineWidth: 2)
+                            }
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain).accessibilityLabel(animal.title)
                     .accessibilityAddTraits(selection.animal == animal ? .isSelected : [])
@@ -28,8 +31,6 @@ struct AvatarEditor: View {
                     .accessibilityValue(selection.animal == animal ? selection.fur.title : "")
                 }
             }
-            Text("Повторное нажатие — другой цвет")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 4) { colorOptions }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 4) {
@@ -52,7 +53,7 @@ struct AvatarEditor: View {
             }
             .buttonStyle(MemoryActionStyle(prominent: true))
         }
-        .disabled(isSaving).padding(16).frame(idealWidth: 320, maxWidth: 320)
+        .disabled(isSaving).padding(16).frame(idealWidth: 344, maxWidth: 344)
         .fixedSize(horizontal: false, vertical: true)
         .animation(reduceMotion ? nil : MemoryMotion.panel, value: selection)
         .interactiveDismissDisabled(isSaving)
@@ -62,13 +63,14 @@ struct AvatarEditor: View {
     private var colorOptions: some View {
         ForEach(ProfileTint.allCases) { tint in
             Button { selection.tint = tint } label: {
-                Circle().fill(tint.color).frame(width: 30, height: 30)
+                Circle().fill(tint.color).frame(width: 42, height: 42)
                     .overlay {
                         if selection.tint == tint {
                             Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(.black)
                         }
                     }
-                    .frame(width: 44, height: 44)
+                    .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain).accessibilityLabel(tint.title)
             .accessibilityAddTraits(selection.tint == tint ? .isSelected : [])

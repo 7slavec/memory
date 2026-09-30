@@ -940,7 +940,7 @@ struct ContentView: View {
                     .frame(height: MemoryMotion.mobileHeaderHeight)
                     .transaction { $0.animation = nil }
 
-                GeometryReader { proxy in
+                GeometryReader { _ in
                     ZStack {
                         ZStack {
                             QuickCaptureCard(
@@ -995,10 +995,15 @@ struct ContentView: View {
                         }
                         .memoryPageVisibility(!isMobileProfilePresented, hiddenX: -MemoryMotion.pageDistance)
 
-                        mobileProfileDestinationContent
-                            .memoryPageVisibility(isMobileProfilePresented, hiddenX: MemoryMotion.pageDistance)
+                        if isMobileProfilePresented {
+                            mobileProfileDestinationContent
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                .transition(MemoryMotion.forward(reduceMotion: reduceMotion))
+                                .zIndex(3)
+                        }
                     }
                     .clipped()
+                    .animation(MemoryMotion.page(reduceMotion: reduceMotion), value: isMobileProfilePresented)
                     .contentShape(Rectangle())
                     .simultaneousGesture(responsiveMobilePageSwipeGesture)
                 }
