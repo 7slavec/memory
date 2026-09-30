@@ -220,6 +220,7 @@ struct ContentView: View {
 #if DEBUG
             if VoiceReviewTesting.isUnitTestHost { return }
             if VoiceReviewTesting.isEnabled {
+                if VoiceReviewTesting.isQuickCaptureEnabled { return }
                 if VoiceReviewTesting.isProfileEnabled {
                     if ProcessInfo.processInfo.arguments.contains("--uitest-filled-records") {
                         for index in 0..<12 {

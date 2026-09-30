@@ -37,12 +37,7 @@ struct MacQuickCaptureSettings: View {
                 }
             }.memoryCard()
             ProfileSettingsRow(title: "Положение окна", icon: "macwindow") {
-                Menu {
-                    ForEach(MacCapturePosition.allCases) { choice in
-                        Button(choice.title) { position = choice }
-                    }
-                } label: { HStack { Text(position.title); Image(systemName: "chevron.down") } }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                MacCapturePositionPicker(selection: $position)
             }.memoryCard()
             Text("Сочетания работают, пока Norka запущена — даже если основное окно закрыто. Escape скрывает окно и оставляет черновик до выхода из приложения. Для диктовки нужен доступ к микрофону и распознаванию речи.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -53,6 +48,28 @@ struct MacQuickCaptureSettings: View {
         }
         .onChange(of: recording) { _, value in shortcuts.setRecording(value != nil) }
         .onDisappear { recording = nil; shortcuts.setRecording(false) }
+    }
+}
+
+private struct MacCapturePositionPicker: View {
+    @Binding var selection: MacCapturePosition
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(32), spacing: 5), count: 3), spacing: 5) {
+            ForEach(MacCapturePosition.allCases) { position in
+                Button { selection = position } label: {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(selection == position ? MemoryTheme.accent : MemoryTheme.accent.opacity(0.2))
+                        .frame(width: 12, height: 9)
+                        .frame(width: 32, height: 26)
+                        .background(selection == position ? MemoryTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain).help(position.title).accessibilityLabel(position.title)
+                .accessibilityAddTraits(selection == position ? .isSelected : [])
+            }
+        }
+        .padding(8).background(MemoryTheme.background, in: RoundedRectangle(cornerRadius: 14))
+        .fixedSize().padding(.vertical, 6)
+        .accessibilityElement(children: .contain).accessibilityLabel("Положение виджета")
     }
 }
 

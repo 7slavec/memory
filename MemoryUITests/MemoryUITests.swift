@@ -12,6 +12,52 @@ import AppKit
 
 final class MemoryUITests: XCTestCase {
 
+#if os(macOS)
+    @MainActor func testQuickWidgetTextReceiptAndInlineEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-quick-capture"]
+        app.launch()
+        ensureWindow(app)
+        let panel = app.dialogs["Быстрый ввод Norka"]
+        let field = panel.textFields["quickCaptureField"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        XCTAssertLessThan(panel.frame.height, 110)
+        XCTAssertLessThan(panel.frame.width, 400)
+        XCTAssertFalse(panel.staticTexts["norka."].exists)
+        XCTAssertFalse(panel.buttons["Добавить напоминание"].exists)
+        field.click(); field.typeText("Проверка виджета\n")
+        let edit = panel.buttons["Изменить"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.click()
+        XCTAssertTrue(panel.buttons["Назад"].waitForExistence(timeout: 5))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Quick capture inline editor"; shot.lifetime = .keepAlways; add(shot)
+        panel.buttons["Назад"].click()
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        panel.buttons["Отменить создание записи"].click()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor func testQuickWidgetBatchResultsStayInSamePanel() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-quick-capture", "--uitest-capture-batch"]
+        app.launch()
+        ensureWindow(app)
+        let panel = app.dialogs["Быстрый ввод Norka"]
+        XCTAssertTrue(panel.staticTexts["Сохранено: 2"].waitForExistence(timeout: 10))
+        let first = panel.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Собрание,")).firstMatch
+        XCTAssertTrue(first.exists)
+        first.click()
+        XCTAssertTrue(panel.buttons["Назад"].waitForExistence(timeout: 5))
+        panel.buttons["Назад"].click()
+        XCTAssertTrue(panel.staticTexts["Сохранено: 2"].waitForExistence(timeout: 5))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Quick capture saved batch"; shot.lifetime = .keepAlways; add(shot)
+        panel.buttons["Отменить создание этих записей"].click()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5))
+    }
+#endif
+
     @MainActor func testProfileAvatarAndNotificationNavigation() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-profile"]

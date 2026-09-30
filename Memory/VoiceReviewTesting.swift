@@ -16,7 +16,15 @@ enum VoiceReviewTesting {
 
     static var isEnabled: Bool {
 #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--uitest-voice-review") || isLinksEnabled || isProfileEnabled
+        ProcessInfo.processInfo.arguments.contains("--uitest-voice-review") || isLinksEnabled || isProfileEnabled || isQuickCaptureEnabled
+#else
+        false
+#endif
+    }
+
+    static var isQuickCaptureEnabled: Bool {
+#if DEBUG && os(macOS)
+        ProcessInfo.processInfo.arguments.contains("--uitest-quick-capture")
 #else
         false
 #endif

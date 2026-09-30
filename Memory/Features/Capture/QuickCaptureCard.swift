@@ -97,6 +97,9 @@ struct QuickCaptureCard: View {
     @State private var pendingVoiceClarification: PendingVoiceClarification?
     @State private var isRecordsComposerPresented = false
     @State private var lastOrbDrag = Date.distantPast
+    @State private var floatingVoiceMode = false
+    @State private var floatingSurfaceVisible = true
+    @State private var floatingVoiceAttempted = false
     @GestureState private var isOrbDragging = false
     @FocusState private var focusedField: QuickCaptureFocus?
     let defaultPreset: QuickDuePreset
@@ -113,6 +116,7 @@ struct QuickCaptureCard: View {
     let onOpenPriorityLinkedRecord: (Item) -> Void
     let autofocus: Bool
     let activation: CaptureActivation?
+    let onFloatingModeChange: (Bool) -> Void
     let detailCommitSignal: Int
     let remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)?
     let onTogglePriority: () -> Void
@@ -138,6 +142,7 @@ struct QuickCaptureCard: View {
         onOpenPriorityLinkedRecord: @escaping (Item) -> Void = { _ in },
         autofocus: Bool = false,
         activation: CaptureActivation? = nil,
+        onFloatingModeChange: @escaping (Bool) -> Void = { _ in },
         detailCommitSignal: Int = 0,
         remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)? = nil,
         onTogglePriority: @escaping () -> Void = {},
@@ -163,6 +168,7 @@ struct QuickCaptureCard: View {
         self.onOpenPriorityLinkedRecord = onOpenPriorityLinkedRecord
         self.autofocus = autofocus
         self.activation = activation
+        self.onFloatingModeChange = onFloatingModeChange
         self.detailCommitSignal = detailCommitSignal
         self.remoteVoiceInterpreter = remoteVoiceInterpreter
         self.onTogglePriority = onTogglePriority
@@ -177,7 +183,9 @@ struct QuickCaptureCard: View {
     var body: some View {
         Group {
 #if os(macOS)
-            if presentation == .desktopWorkspace {
+            if presentation == .floating {
+                floatingBody
+            } else if presentation == .desktopWorkspace {
                 desktopCaptureBody
             } else if isHome {
                 homeBody
@@ -260,12 +268,20 @@ struct QuickCaptureCard: View {
             guard let command else { return }
             switch command.mode {
             case .text:
+                floatingSurfaceVisible = true
                 guard !isVoicePreviewActive, pendingVoiceClarification == nil else { return }
+                floatingVoiceMode = false
+                onFloatingModeChange(false)
                 focusedField = .title
             case .voice:
+                floatingSurfaceVisible = true
                 guard !isVoicePreviewActive, pendingVoiceClarification == nil else { return }
+                floatingVoiceMode = true
+                floatingVoiceAttempted = true
+                onFloatingModeChange(true)
                 handleVoiceTap()
             case .suspend:
+                floatingSurfaceVisible = false
                 shouldSubmitVoiceWhenStopped = false
                 voiceSubmissionTask?.cancel()
                 isFinalizingVoiceSubmission = false
@@ -409,6 +425,7 @@ struct QuickCaptureCard: View {
     private var compactBody: some View {
         VStack(alignment: .leading, spacing: isDocked ? 10 : 14) {
             HStack(spacing: isDocked ? 10 : 12) {
+#if os(iOS)
                 if presentation != .standard && !voiceInput.isListening {
                     Button(action: submit) {
                         Image(systemName: "arrow.up")
@@ -435,6 +452,7 @@ struct QuickCaptureCard: View {
                         .background(MemoryTheme.accent.opacity(0.12))
                         .clipShape(Circle())
                 }
+#endif
 
                 TextField(
                     voiceInput.isListening ? "Говорите…" : "Что нужно запомнить?",
@@ -507,6 +525,89 @@ struct QuickCaptureCard: View {
         .padding(usesMinimalDesktopChrome ? 12 : (isDocked ? 12 : 18))
         .modifier(QuickCaptureSurfaceModifier(isMinimal: usesMinimalDesktopChrome))
     }
+
+#if os(macOS)
+    private var floatingBody: some View {
+        VStack(spacing: 10) {
+            if floatingVoiceMode {
+                HStack {
+                    Button {
+                        shouldSubmitVoiceWhenStopped = false
+                        voiceSubmissionTask?.cancel()
+                        voiceInput.stop()
+                        floatingVoiceMode = false
+                        onFloatingModeChange(false)
+                        focusedField = .title
+                    } label: { Image(systemName: "keyboard").frame(width: 28, height: 28) }
+                        .buttonStyle(.plain).help("Продолжить текстом")
+                        .accessibilityLabel("Продолжить текстом")
+                        .disabled(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
+                    Spacer()
+                    floatingClose
+                }
+                Button {
+                    floatingVoiceAttempted = true
+                    handleVoiceTap()
+                } label: {
+                    GlassVoiceOrb(isListening: voiceInput.isListening,
+                                  isProcessing: isFinalizingVoiceSubmission,
+                                  isPulsing: isVoicePulsing, size: 110,
+                                  isVisible: floatingSurfaceVisible, animatesInBackground: true)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
+                .accessibilityLabel(voiceOrbAccessibilityLabel)
+                .help(voiceInput.isListening ? "Завершить диктовку" : "Начать диктовку")
+                if pendingVoiceClarification != nil {
+                    voiceClarificationCard
+                } else if isFinalizingVoiceSubmission {
+                    Text("Разбираю запись…").font(.system(size: 13)).foregroundStyle(.secondary)
+                        .frame(height: 56)
+                } else if !trimmedDraft.isEmpty {
+                    ScrollView {
+                        Text(draft).font(.system(size: 14)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .defaultScrollAnchor(.bottom).frame(height: 56)
+                    .accessibilityLabel("Транскрипция")
+                } else {
+                    Text(voiceInput.isListening ? "Говорите…" : shouldSubmitVoiceWhenStopped
+                         ? "Подключаю микрофон…" : floatingVoiceAttempted
+                         ? "Не расслышала. Нажмите на сферу, чтобы повторить." : "Нажмите на сферу")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center).frame(height: 56)
+                }
+            } else {
+                HStack(alignment: .center, spacing: 8) {
+                    TextField("Что запомнить?", text: $draft, axis: .vertical)
+                        .textFieldStyle(.plain).font(.system(size: 15)).lineLimit(1...6)
+                        .focused($focusedField, equals: .title)
+                        .onSubmit(handleSubmitKey)
+                        .accessibilityIdentifier("quickCaptureField")
+                        .help("Enter — сохранить. Escape — скрыть с сохранением черновика.")
+                    Button {
+                        floatingVoiceMode = true
+                        floatingVoiceAttempted = true
+                        onFloatingModeChange(true)
+                        handleVoiceTap()
+                    } label: { Image(systemName: "mic").frame(width: 28, height: 28) }
+                        .buttonStyle(.plain).help("Диктовать").accessibilityLabel("Голосовой ввод")
+                    floatingClose
+                }
+            }
+        }
+        .padding(12)
+    }
+
+    private var floatingClose: some View {
+        Button(action: onDismiss) {
+            Image(systemName: "xmark").font(.system(size: 11, weight: .medium))
+                .frame(width: 24, height: 28)
+        }.buttonStyle(.plain).foregroundStyle(.secondary)
+            .help("Скрыть · Esc").accessibilityLabel("Скрыть быстрый ввод")
+    }
+#endif
 
     private var homeBody: some View {
         GeometryReader { proxy in

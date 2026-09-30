@@ -7,6 +7,33 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct MacQuickCaptureTests {
+    @Test func receiptOnlyAutoHidesWhenSafe() {
+        let ready = MacCaptureAutoHidePolicy(count: 1, interacting: false, hasError: false, isVisible: true, usesVoiceOver: false)
+        #expect(ready.shouldHide)
+        var policy = ready; policy.count = 2; #expect(!policy.shouldHide)
+        policy = ready; policy.count = 0; #expect(!policy.shouldHide)
+        policy = ready; policy.interacting = true; #expect(!policy.shouldHide)
+        policy = ready; policy.hasError = true; #expect(!policy.shouldHide)
+        policy = ready; policy.isVisible = false; #expect(!policy.shouldHide)
+        policy = ready; policy.usesVoiceOver = true; #expect(!policy.shouldHide)
+    }
+
+    @Test func allNineAnchorsPreserveTheirEdgeWhenWidgetChangesSize() {
+        #expect(MacCapturePosition.allCases.count == 9)
+        let area = NSRect(x: -1200, y: -900, width: 1200, height: 900)
+        for position in MacCapturePosition.allCases {
+            let small = NSSize(width: 264, height: 264), large = NSSize(width: 440, height: 540)
+            let a = NSRect(origin: position.origin(size: small, in: area), size: small)
+            let b = NSRect(origin: position.origin(size: large, in: area), size: large)
+            #expect(area.contains(a) && area.contains(b))
+            if position.column == 0 { #expect(a.minX == b.minX) }
+            if position.column == 1 { #expect(a.midX == b.midX) }
+            if position.column == 2 { #expect(a.maxX == b.maxX) }
+            if position.row == 0 { #expect(a.maxY == b.maxY) }
+            if position.row == 1 { #expect(a.midY == b.midY) }
+            if position.row == 2 { #expect(a.minY == b.minY) }
+        }
+    }
     @Test func cancelWhilePermissionIsPendingNeverStartsMicrophone() async throws {
         var continuation: CheckedContinuation<Bool, Never>?
         var microphoneRequests = 0

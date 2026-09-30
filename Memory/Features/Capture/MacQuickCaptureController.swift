@@ -5,14 +5,26 @@ import SwiftData
 import Combine
 
 enum MacCapturePosition: String, CaseIterable, Identifiable {
-    case topRight, topLeft, center
+    case topLeft, topCenter, topRight, centerLeft, center, centerRight, bottomLeft, bottomCenter, bottomRight
     var id: Self { self }
     var title: String {
-        switch self { case .topRight: "Справа сверху"; case .topLeft: "Слева сверху"; case .center: "По центру" }
+        switch self {
+        case .topLeft: "Слева сверху"
+        case .topCenter: "Сверху по центру"
+        case .topRight: "Справа сверху"
+        case .centerLeft: "Слева по центру"
+        case .center: "По центру"
+        case .centerRight: "Справа по центру"
+        case .bottomLeft: "Слева снизу"
+        case .bottomCenter: "Снизу по центру"
+        case .bottomRight: "Справа снизу"
+        }
     }
+    var column: Int { Self.allCases.firstIndex(of: self)! % 3 }
+    var row: Int { Self.allCases.firstIndex(of: self)! / 3 }
     func origin(size: NSSize, in area: NSRect) -> NSPoint {
-        let x = self == .topRight ? area.maxX - size.width - 20 : self == .topLeft ? area.minX + 20 : area.midX - size.width / 2
-        let y = self == .center ? area.midY - size.height / 2 : area.maxY - size.height - 20
+        let x = column == 2 ? area.maxX - size.width - 20 : column == 0 ? area.minX + 20 : area.midX - size.width / 2
+        let y = row == 0 ? area.maxY - size.height - 20 : row == 2 ? area.minY + 20 : area.midY - size.height / 2
         return NSPoint(x: max(area.minX, min(x, area.maxX - size.width)),
                        y: max(area.minY, min(y, area.maxY - size.height)))
     }
@@ -38,22 +50,32 @@ final class MacQuickCaptureController: ObservableObject {
     private var presentationID = UUID()
 
     func configure(container: ModelContainer, account: AccountSyncController) {
-        guard self.container == nil, !VoiceReviewTesting.isEnabled, !DesignCatalogMode.isEnabled,
-              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        guard self.container == nil, !DesignCatalogMode.isEnabled,
+              VoiceReviewTesting.isQuickCaptureEnabled || (!VoiceReviewTesting.isEnabled &&
+              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil) else { return }
         self.container = container
         self.account = account
+        if VoiceReviewTesting.isQuickCaptureEnabled {
+            // Do not create a second SwiftUI hosting tree inside the main
+            // window's initial onAppear transaction.
+            Task { @MainActor in
+                await Task.yield()
+                self.show(.text)
+            }
+            return
+        }
         MacCaptureShortcuts.shared.onInvoke = { [weak self] in self?.show($0) }
         MacCaptureShortcuts.shared.start()
     }
 
     func show(_ action: MacCaptureAction) {
         guard let container, let account else { return }
-        guard UserDefaults.standard.bool(forKey: "hasCompletedInitialAccessChoice") else {
+        guard VoiceReviewTesting.isQuickCaptureEnabled || UserDefaults.standard.bool(forKey: "hasCompletedInitialAccessChoice") else {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         if panel == nil {
-            let window = CapturePanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 220),
+            let window = CapturePanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 60),
                                       styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             window.title = "Быстрый ввод Norka"
             window.level = .floating
@@ -77,7 +99,7 @@ final class MacQuickCaptureController: ObservableObject {
             previousApp = NSWorkspace.shared.frontmostApplication
             screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main
             editorHeight = min(540, max(160, (screen?.visibleFrame.height ?? 800) - 150))
-            resize(height: panel.frame.height)
+            resize(size: panel.frame.size)
             panel.alphaValue = 0
             panel.makeKeyAndOrderFront(nil)
             NSAnimationContext.runAnimationGroup { context in
@@ -120,12 +142,20 @@ final class MacQuickCaptureController: ObservableObject {
         })
     }
 
-    func resize(height: CGFloat) {
+    func resize(size requestedSize: CGSize) {
         guard let panel, let screen = screen ?? NSScreen.main else { return }
         let area = screen.visibleFrame
-        let size = NSSize(width: min(460, area.width - 24), height: min(max(150, height), area.height - 40))
+        let size = NSSize(width: min(requestedSize.width, area.width - 24), height: min(max(52, requestedSize.height), area.height - 40))
         let position = MacCapturePosition(rawValue: UserDefaults.standard.string(forKey: "mac.capture.position") ?? "") ?? .topRight
-        panel.setFrame(NSRect(origin: position.origin(size: size, in: area), size: size), display: true)
+        let frame = NSRect(origin: position.origin(size: size, in: area), size: size)
+        guard abs(panel.frame.width - frame.width) > 0.5 || abs(panel.frame.height - frame.height) > 0.5
+                || panel.frame.origin != frame.origin else { return }
+        if panel.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = MemoryMotion.pageDuration
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else { panel.setFrame(frame, display: true) }
     }
 
     func resetForAccountChange() {

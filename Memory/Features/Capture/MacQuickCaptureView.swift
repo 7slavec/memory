@@ -2,134 +2,270 @@
 import SwiftUI
 import SwiftData
 
+struct MacCaptureAutoHidePolicy: Equatable {
+    var count: Int
+    var interacting: Bool
+    var hasError: Bool
+    var isVisible: Bool
+    var usesVoiceOver: Bool
+    var shouldHide: Bool { count == 1 && !interacting && !hasError && isVisible && !usesVoiceOver }
+}
+
 struct MacQuickCaptureView: View {
     @EnvironmentObject private var account: AccountSyncController
     @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @ObservedObject var controller: MacQuickCaptureController
     @AppStorage(AppAppearance.storageKey) private var appearance = AppAppearance.system
     @State private var review: VoiceBatchReviewSession?
     @State private var detail: Item?
+    @State private var isNewDetail = false
+    @State private var results: [Item] = []
+    @State private var isVoice = false
+    @State private var hovered = false
+    @State private var keyboardInteraction = false
     @State private var commitSignal = 0
-    @State private var feedback: String?
     @State private var error: String?
-    private var expanded: Bool { review != nil || detail != nil }
+    @State private var reminderQueue = MacCaptureReminderQueue()
+    private var occupied: Bool { review != nil || detail != nil || !results.isEmpty }
+    private var width: CGFloat { detail != nil || review != nil ? 440 : !results.isEmpty ? 360 : isVoice ? 264 : 360 }
+    private var autoHide: MacCaptureAutoHidePolicy {
+        .init(count: results.count, interacting: hovered || keyboardInteraction || detail != nil || review != nil,
+              hasError: error != nil, isVisible: controller.activation?.mode != .suspend, usesVoiceOver: voiceOver)
+    }
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text("norka.").font(.system(size: 20, weight: .semibold))
-                Spacer()
-                if let feedback { Label(feedback, systemImage: "checkmark").font(.system(size: 12)) }
-                Button(action: controller.hide) {
-                    Image(systemName: "xmark").font(.system(size: 12, weight: .medium))
-                        .frame(width: 28, height: 28).background(MemoryTheme.card, in: Circle())
-                }.buttonStyle(.plain).accessibilityLabel("Скрыть быстрый ввод, сохранив черновик")
-            }
+        VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                QuickCaptureCard(defaultPreset: .none, presentation: .floating,
-                                 activation: expanded ? nil : controller.activation,
-                                 detailCommitSignal: commitSignal,
-                                 remoteVoiceInterpreter: { text, now, calendar in
-                                     try await account.interpretVoiceRemotely(text, now: now, calendar: calendar)
-                                 },
-                                 onOpenDetails: { title, details, kind, date, end in
-                                     detail = Item(title: title, details: details, dueDate: date,
-                                                   entryKind: kind, endDate: end,
-                                                   reminderOffsets: date == nil ? [] : [account.defaultReminderMinutes(for: kind)])
-                                 },
-                                 onReviewBatch: { review = VoiceBatchReviewSession(batch: $0) },
-                                 onAdd: save)
-                    .opacity(expanded ? 0 : 1)
-                    .frame(height: expanded ? 0 : nil).clipped()
-                    .allowsHitTesting(!expanded).accessibilityHidden(expanded)
+                composer
+                    .opacity(occupied ? 0 : 1).frame(height: occupied ? 0 : nil).clipped()
+                    .allowsHitTesting(!occupied).accessibilityHidden(occupied)
                 if let detail {
-                    ItemEditorView(item: detail, onSave: { title, details, kind, date, end, offsets in
-                        guard save(title, details, kind, date, end, offsets) != nil else { return false }
-                        commitSignal += 1
-                        self.detail = nil
-                        return true
-                    }, onToggleCompleted: { false }, onDelete: { false },
-                                   isEmbedded: true, isCompactDesktopPane: true, isNew: true,
-                                   onDismiss: { self.detail = nil })
-                        .id(detail.id).frame(height: controller.editorHeight)
+                    editor(detail).frame(height: controller.editorHeight)
                 } else if let review {
-                    // Entries are drafts here, so external persisted-record callbacks are unreachable.
-                    VoiceBatchReviewView(session: review, onCancel: { self.review = nil },
-                                         onSave: { saveBatch(review) },
-                                         onSaveExisting: { _, _, _, _, _, _, _ in false },
-                                         onToggleExisting: { _ in false }, onDeleteExisting: { _ in false },
-                                         header: { EmptyView() })
-                        .frame(height: controller.editorHeight)
+                    draftReview(review).frame(height: controller.editorHeight)
+                } else if !results.isEmpty {
+                    MacCaptureResultsView(items: results, onEdit: openResult,
+                        onUndo: undoCreation, onNew: startNew, onClose: controller.hide)
+                        .frame(maxHeight: controller.editorHeight)
                 }
             }
             if let error {
                 Text(error).font(.system(size: 12)).foregroundStyle(MemoryTheme.danger)
-                    .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
-            }
-            if !expanded {
-                HStack {
-                    Text("↵ Сохранить").font(.system(size: 11))
-                    Spacer()
-                    Text("esc Скрыть").font(.system(size: 11))
-                }.foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled).padding(12)
             }
         }
-        .padding(16)
+        .frame(width: width).fixedSize(horizontal: false, vertical: true)
         .foregroundStyle(MemoryTheme.accent)
         .background(MemoryTheme.background, in: RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
-        .overlay { RoundedRectangle(cornerRadius: MemoryTheme.cardRadius).stroke(.primary.opacity(0.1), lineWidth: 1) }
+        .overlay { RoundedRectangle(cornerRadius: MemoryTheme.cardRadius).strokeBorder(.primary.opacity(0.1), lineWidth: 1).allowsHitTesting(false) }
+        .compositingGroup().clipShape(RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
         .preferredColorScheme(appearance.colorScheme)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controller.resize(height: $0) }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { controller.resize(size: $0) }
         .onExitCommand(perform: controller.hide)
-        .onChange(of: controller.activation) { _, command in
-            if command?.mode != .suspend { feedback = nil }
+        .onHover { hovered = $0 }
+        .onKeyPress(.tab) { keyboardInteraction = true; return .ignored }
+        .task(id: autoHide) {
+            guard autoHide.shouldHide else { return }
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            guard !Task.isCancelled, autoHide.shouldHide else { return }
+            controller.hide()
         }
+        .onChange(of: controller.activation) { _, command in
+            guard let command, command.mode != .suspend else { return }
+            // Reopening a receipt starts fresh; unfinished editors and batches remain available.
+            if results.count == 1, detail == nil, review == nil { results = []; keyboardInteraction = false }
+        }
+#if DEBUG
+        .task {
+            guard VoiceReviewTesting.isQuickCaptureEnabled,
+                  ProcessInfo.processInfo.arguments.contains("--uitest-capture-batch") else { return }
+            var entries = VoiceReviewTesting.session().entries
+            for index in entries.indices { entries[index].persistedItemID = nil }
+            receiveBatch(VoiceBatchReview(referenceDate: .now, entries: entries))
+        }
+#endif
+    }
+
+    private var composer: some View {
+        QuickCaptureCard(defaultPreset: .none, presentation: .floating,
+            activation: occupied ? nil : controller.activation,
+            onFloatingModeChange: { isVoice = $0 }, detailCommitSignal: commitSignal,
+            remoteVoiceInterpreter: { text, now, calendar in
+                try await account.interpretVoiceRemotely(text, now: now, calendar: calendar)
+            }, onDismiss: controller.hide,
+            onOpenDetails: { title, details, kind, date, end in
+                isNewDetail = true
+                detail = Item(title: title, details: details, dueDate: date, entryKind: kind, endDate: end,
+                              reminderOffsets: date == nil ? [] : [account.defaultReminderMinutes(for: kind)])
+            }, onReviewBatch: receiveBatch, onAdd: save)
+    }
+
+    private func editor(_ item: Item) -> some View {
+        ItemEditorView(item: item, onSave: { title, details, kind, date, end, offsets in
+            let succeeded = isNewDetail
+                ? save(title, details, kind, date, end, offsets) != nil
+                : update(item, title, details, kind, date, end, offsets)
+            guard succeeded else { return false }
+            if isNewDetail { commitSignal += 1 }
+            detail = nil
+            return true
+        }, onToggleCompleted: { toggle(item) }, onDelete: { remove(item) },
+            isEmbedded: true, isCompactDesktopPane: true, isNew: isNewDetail,
+            onDismiss: { detail = nil })
+            .id(item.id)
+    }
+
+    private func draftReview(_ session: VoiceBatchReviewSession) -> some View {
+        VoiceBatchReviewView(session: session, onCancel: { review = nil },
+            onSave: { saveBatch(session) }, onSaveExisting: update,
+            onToggleExisting: toggle, onDeleteExisting: remove, header: { EmptyView() })
+    }
+
+    private func openResult(_ item: Item) {
+        keyboardInteraction = true
+        isNewDetail = false
+        detail = item
+    }
+
+    private func startNew() {
+        results = []; review = nil; error = nil; keyboardInteraction = false
+        controller.show(.text)
+    }
+
+    private func receiveBatch(_ batch: VoiceBatchReview) {
+        guard review?.id != batch.id else { return }
+        let session = VoiceBatchReviewSession(batch: batch)
+        review = session
+        // Match the main screen: complete results save once; ambiguous ones stay editable drafts.
+        if session.canSave { _ = saveBatch(session) }
     }
 
     private func save(_ title: String, _ details: String?, _ kind: EntryKind,
                       _ date: Date?, _ end: Date?, _ offsets: [Int]?) -> UUID? {
-        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              kind != .event || date != nil else {
-            error = "Для события укажите дату и время начала."
-            return nil
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, kind != .event || date != nil else {
+            error = "Для события укажите дату и время начала."; return nil
         }
-        let item = Item(title: title, details: details, dueDate: date, entryKind: kind,
-                        endDate: end, reminderOffsets: date == nil ? [] : (offsets ?? [account.defaultReminderMinutes(for: kind)]),
+        let item = Item(title: title, details: details, dueDate: date, entryKind: kind, endDate: end,
+                        reminderOffsets: date == nil ? [] : (offsets ?? [account.defaultReminderMinutes(for: kind)]),
                         ownerID: account.userID)
         context.insert(item)
-        do { try context.save() }
-        catch { context.rollback(); self.error = "Не удалось сохранить: \(error.localizedDescription)"; return nil }
-        didSave([item])
+        guard commit() else { return nil }
+        results = [item]; keyboardInteraction = false
+        changed([item])
         return item.id
     }
 
-    private func saveBatch(_ review: VoiceBatchReviewSession) -> Bool {
-        guard review.canSave, self.review?.id == review.id else { return false }
+    private func saveBatch(_ session: VoiceBatchReviewSession) -> Bool {
+        guard session.canSave, review?.id == session.id else { return false }
         do {
-            let items = try VoiceBatchPersistence.create(review.entries, ownerID: account.userID, context: context)
-            for (entry, item) in zip(review.entries, items) {
+            let items = try VoiceBatchPersistence.create(session.entries, ownerID: account.userID, context: context)
+            for (entry, item) in zip(session.entries, items) where !VoiceReviewTesting.isEnabled {
                 VoicePersonalizationStore.beginCapture(itemID: item.id, transcript: entry.sourceText,
                     title: entry.originalDraft.title, details: entry.originalDraft.details,
-                    dueDate: entry.originalDraft.dueDate, referenceDate: review.batch.referenceDate)
+                    dueDate: entry.originalDraft.dueDate, referenceDate: session.batch.referenceDate)
             }
-            self.review = nil
-            didSave(items)
+            review = nil; results = items; keyboardInteraction = false
+            changed(items)
             return true
         } catch { self.error = "Не удалось сохранить: \(error.localizedDescription)"; return false }
     }
 
-    private func didSave(_ items: [Item]) {
-        error = nil
-        feedback = items.count == 1 ? "Сохранено" : "Сохранено: \(items.count)"
-        account.markLocalChange(modelContext: context)
-        for item in items where item.notificationsEnabled {
-            guard let date = item.dueDate else { continue }
-            let id = item.id, title = item.title, details = item.details, offsets = item.effectiveReminderOffsets
-            Task { @MainActor in
-                do { try await ReminderScheduler.schedule(id: id, title: title, details: details, at: date, offsets: offsets) }
-                catch { self.error = "Запись сохранена. Уведомление: \(error.localizedDescription)" }
-            }
+    private func update(_ item: Item, _ title: String, _ details: String?, _ kind: EntryKind,
+                        _ date: Date?, _ end: Date?, _ offsets: [Int]) -> Bool {
+        guard item.ownerID == account.userID, item.deletedAt == nil else { return false }
+        item.title = title; item.details = Item.normalizedDetails(details); item.entryKind = kind
+        item.dueDate = date; item.endDate = kind == .event ? end : nil
+        item.setReminderOffsets(date == nil ? [] : offsets); item.updatedAt = .now
+        guard commit() else { return false }
+        if !VoiceReviewTesting.isEnabled {
+            VoicePersonalizationStore.confirmCorrection(itemID: item.id, title: item.title,
+                                                        details: item.details, dueDate: item.dueDate)
         }
+        changed([item]); return true
+    }
+
+    private func toggle(_ item: Item) -> Bool {
+        item.setCompleted(!item.isCompleted)
+        guard commit() else { return false }
+        changed([item]); return true
+    }
+
+    private func remove(_ item: Item) -> Bool {
+        guard deleteCaptured([item]) else { return false }
+        results.removeAll { $0.id == item.id }; detail = nil
+        if results.isEmpty { controller.hide() }
+        return true
+    }
+
+    private func undoCreation() {
+        guard deleteCaptured(results) else { return }
+        results = []; controller.hide()
+    }
+
+    private func deleteCaptured(_ items: [Item]) -> Bool {
+        guard !items.isEmpty, items.allSatisfy({ $0.ownerID == account.userID }) else { return false }
+        do { try VoiceBatchPersistence.stageDeletion(items, context: context) }
+        catch { context.rollback(); self.error = error.localizedDescription; return false }
+        guard commit() else { return false }
+        changed(items); return true
+    }
+
+    private func commit() -> Bool {
+        do { try context.save(); return true }
+        catch { context.rollback(); self.error = "Не удалось сохранить: \(error.localizedDescription)"; return false }
+    }
+
+    private func changed(_ items: [Item]) {
+        error = nil
+        guard !VoiceReviewTesting.isEnabled else { return }
+        account.markLocalChange(modelContext: context)
+        for item in items {
+            reminderQueue.update(item) { error = $0 }
+        }
+    }
+}
+
+private struct MacCaptureResultsView: View {
+    @State private var contentHeight: CGFloat = 60
+    let items: [Item]
+    let onEdit: (Item) -> Void
+    let onUndo: () -> Void
+    let onNew: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Label(items.count == 1 ? "Сохранено" : "Сохранено: \(items.count)", systemImage: "checkmark")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+                Button(action: onClose) { Image(systemName: "xmark").frame(width: 28, height: 28) }
+                    .buttonStyle(.plain).accessibilityLabel("Скрыть результат")
+            }
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(items) { item in
+                        MemoryItemRow(item: item, onEdit: { onEdit(item) }, showsContextMenu: false)
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+            }.scrollBounceBehavior(.basedOnSize)
+                .frame(height: min(300, max(60, contentHeight)))
+            HStack(spacing: 8) {
+                if items.count == 1, let item = items.first {
+                    Button { onEdit(item) } label: { Label("Изменить", systemImage: "pencil") }
+                        .buttonStyle(MemoryActionStyle(compact: true))
+                } else {
+                    Button(action: onNew) { Label("Новая", systemImage: "plus") }
+                        .buttonStyle(MemoryActionStyle(compact: true))
+                }
+                Spacer()
+                Button(action: onUndo) { Image(systemName: "arrow.uturn.backward").frame(width: 32, height: 32) }
+                    .buttonStyle(.plain).help("Отменить создание")
+                    .accessibilityLabel(items.count == 1 ? "Отменить создание записи" : "Отменить создание этих записей")
+            }
+        }.padding(12)
     }
 }
 #endif
