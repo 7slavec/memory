@@ -103,7 +103,7 @@ struct QuickCaptureCard: View {
     let isDocked: Bool
     let isHome: Bool
     let isRecordsPage: Bool
-    let isPageSwiping: Bool
+    let isPageSwiping: () -> Bool
     let externalKeyboardVisible: Bool
     let priorityItem: Item?
     let isPriorityOverdue: Bool
@@ -127,7 +127,7 @@ struct QuickCaptureCard: View {
         isDocked: Bool = false,
         isHome: Bool = false,
         isRecordsPage: Bool = false,
-        isPageSwiping: Bool = false,
+        isPageSwiping: @escaping () -> Bool = { false },
         externalKeyboardVisible: Bool = false,
         priorityItem: Item? = nil,
         isPriorityOverdue: Bool = false,
@@ -838,7 +838,8 @@ struct QuickCaptureCard: View {
     }
 
     private func handleHomeVoiceTap() {
-        guard !isPageSwiping, !isOrbDragging, Date.now.timeIntervalSince(lastOrbDrag) > 0.3 else { return }
+        guard !isRecordsPage, !isPageSwiping(), !isOrbDragging,
+              Date.now.timeIntervalSince(lastOrbDrag) > 0.3 else { return }
         handleVoiceTap()
     }
 

@@ -24,11 +24,12 @@ private struct MemoryPageVisibility: ViewModifier {
             // The page owns its transform, not the layout/controls inside it.
             // Keep the value-driven timing identical to profile push transitions.
             .transaction { $0.animation = nil }
-            .opacity(visible ? 1 : 0)
-            .offset(x: visible || reduceMotion ? 0 : hiddenX)
+            .visualEffect { [visible, hiddenX, reduceMotion] effect, _ in
+                effect.opacity(visible ? 1 : 0)
+                    .offset(x: visible || reduceMotion ? 0 : hiddenX)
+            }
             .animation(MemoryMotion.page(reduceMotion: reduceMotion), value: visible)
             .allowsHitTesting(visible)
-            .disabled(!visible)
             .accessibilityHidden(!visible)
     }
 }

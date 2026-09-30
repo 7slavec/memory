@@ -167,7 +167,8 @@ struct ContentView: View {
     @State private var recentlyAddedItem: Item?
     @State private var recentlyAddedBatchCount: Int?
     @State private var batchConfirmationVersion = 0
-    @State private var suppressItemOpening = false
+    @State private var pageInteractionGate = PageInteractionGate()
+    private var suppressItemOpening: Bool { pageInteractionGate.isSuppressed() }
     @State private var isAccountPresented = false
     @State private var archiveSearchText = ""
     @State private var inboxSearchText = ""
@@ -220,6 +221,17 @@ struct ContentView: View {
             if VoiceReviewTesting.isUnitTestHost { return }
             if VoiceReviewTesting.isEnabled {
                 if VoiceReviewTesting.isProfileEnabled {
+                    if ProcessInfo.processInfo.arguments.contains("--uitest-filled-records") {
+                        for index in 0..<12 {
+                            modelContext.insert(Item(
+                                title: "Проверочная запись \(index + 1)",
+                                details: index.isMultiple(of: 2) ? "Описание для проверки перехода с заполненным списком" : nil,
+                                dueDate: Date.now.addingTimeInterval(Double(index + 1) * 3_600),
+                                entryKind: index.isMultiple(of: 3) ? .event : .reminder,
+                                notificationsEnabled: false))
+                        }
+                        try? modelContext.save()
+                    }
 #if os(macOS)
                     desktopSection = .profile
 #else
@@ -389,7 +401,14 @@ struct ContentView: View {
             voiceReviewPage(session)
         } else {
             ZStack(alignment: .trailing) {
-                desktopSectionContent
+                ZStack {
+                    desktopSectionContent
+                        .id(desktopSection)
+                        .transition(.asymmetric(
+                            insertion: MemoryMotion.forward(reduceMotion: reduceMotion),
+                            removal: .opacity))
+                }
+                    .animation(MemoryMotion.page(reduceMotion: reduceMotion), value: desktopSection)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.trailing, showsDetailPane ? detailPaneWidth + 16 : 0)
                     .opacity(editingItem != nil && !showsDetailPane ? 0 : 1)
@@ -591,12 +610,10 @@ struct ContentView: View {
 
     private func selectDesktopSection(_ section: DesktopSection) {
         requestVoiceReviewExit {
-            withAnimation(.easeOut(duration: 0.16)) {
-                desktopSection = section
-                editingItem = nil
-                isEditingNewDesktopItem = false
-                isDesktopComposerPresented = false
-            }
+            desktopSection = section
+            editingItem = nil
+            isEditingNewDesktopItem = false
+            isDesktopComposerPresented = false
         }
     }
 
@@ -948,7 +965,7 @@ struct ContentView: View {
                                 isDocked: true,
                                 isHome: true,
                                 isRecordsPage: selectedSection == .all,
-                                isPageSwiping: suppressItemOpening,
+                                isPageSwiping: { pageInteractionGate.isSuppressed() },
                                 externalKeyboardVisible: isKeyboardVisible,
                                 priorityItem: homePriorityItem,
                                 isPriorityOverdue: homePriorityIsOverdue,
@@ -1321,8 +1338,8 @@ struct ContentView: View {
                 let vertical = value.translation.height
                 guard abs(horizontal) > abs(vertical) * 1.2 else { return }
 
-                if abs(horizontal) > 18, !suppressItemOpening {
-                    suppressItemOpening = true
+                if abs(horizontal) > 18 {
+                    pageInteractionGate.begin()
                 }
             }
             .onEnded { value in
@@ -1339,7 +1356,7 @@ struct ContentView: View {
                 if abs(horizontal) > 26,
                    abs(horizontal) > abs(vertical) * 1.2,
                    (abs(horizontal) > 44 || abs(predicted) > 52) {
-                    suppressItemOpening = true
+                    pageInteractionGate.begin()
                     if selectedSection == .now, horizontal > 0 {
                         navigateMobile(to: .all)
                     } else if selectedSection == .all, horizontal < 0 {
@@ -1360,7 +1377,7 @@ struct ContentView: View {
                 let vertical = value.translation.height
                 guard abs(horizontal) > abs(vertical) * 1.25,
                       abs(horizontal) > 14 else { return }
-                suppressItemOpening = true
+                pageInteractionGate.begin()
             }
             .onEnded { value in
                 let horizontal = value.translation.width
@@ -1378,17 +1395,14 @@ struct ContentView: View {
     }
 
     private func resetResponsiveSwipeState() {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(160))
-            suppressItemOpening = false
-        }
+        pageInteractionGate.end()
     }
 
     private func navigateMobile(to section: MemorySection) {
         guard !isMobileProfilePresented else { return }
         guard selectedSection != section else { return }
         requestVoiceReviewExit {
-            dismissAppKeyboard()
+            if isKeyboardVisible { dismissAppKeyboard() }
             isInboxPresented = false
             selectedSection = section
         }

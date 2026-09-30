@@ -24,7 +24,22 @@ final class AccountSyncController: ObservableObject {
     @Published private(set) var personalization = ProfilePersonalization()
     @Published private(set) var isSavingPersonalization = false
     @Published private(set) var personalizationError: String?
+    @Published private(set) var avatarSaveError: String?
     private var personalizationRevision = 0
+    private lazy var avatarSaveQueue = ProfileAvatarSaveQueue(
+        persist: { [weak self] avatar in
+            guard let self else { return }
+            // An event-notification preference may already be saving. Serialize,
+            // rather than discard a later avatar choice with a 'busy' error.
+            while isSavingPersonalization { try await Task.sleep(for: .milliseconds(50)) }
+            try Task.checkCancellation()
+            try await setAvatar(avatar)
+        },
+        didFinish: { [weak self] in self?.finishAvatarSave() },
+        didFail: { [weak self] in
+            self?.avatarSaveError = "Аватар сохранён на устройстве. Не удалось синхронизировать."
+        }
+    )
 
     let isConfigured: Bool
     private let client: SupabaseClient?
@@ -59,6 +74,7 @@ final class AccountSyncController: ObservableObject {
             isConfigured = false
             state = .localOnly
         }
+        restorePendingAvatar()
     }
 
     var isSignedIn: Bool { userID != nil }
@@ -120,10 +136,13 @@ final class AccountSyncController: ObservableObject {
         guard let client else { return }
         await stopRealtime()
         try await client.auth.signOut(scope: .local)
+        avatarSaveQueue.reset()
+        avatarSaveError = nil
         userID = nil
         personalizationRevision += 1
         personalization = Self.cachedPersonalization(ownerID: nil)
         personalizationError = nil
+        restorePendingAvatar()
         linkSyncError = nil
         email = nil
         state = .ready
@@ -239,6 +258,42 @@ final class AccountSyncController: ObservableObject {
     }
 
     /// Appearance metadata is merged by Auth; no task/profile schema migration.
+    func selectAvatar(_ avatar: ProfileAvatar) {
+        guard personalization.avatar != avatar else { return }
+        personalizationRevision += 1
+        personalization.avatar = avatar
+        cachePersonalization()
+        storePendingAvatar(avatar)
+        avatarSaveError = nil
+        avatarSaveQueue.submit(avatar)
+    }
+
+    func retryAvatarSave() {
+        avatarSaveError = nil
+        avatarSaveQueue.retry()
+    }
+
+    private func finishAvatarSave() {
+        storePendingAvatar(nil)
+        if avatarSaveError != nil { avatarSaveError = nil }
+    }
+
+    private func storePendingAvatar(_ avatar: ProfileAvatar?) {
+        guard !VoiceReviewTesting.usesIsolatedStorage else { return }
+        let key = Self.personalizationKey(userID) + ".pendingAvatar"
+        if let avatar, let data = try? JSONEncoder().encode(avatar) {
+            UserDefaults.standard.set(data, forKey: key)
+        } else { UserDefaults.standard.removeObject(forKey: key) }
+    }
+
+    private func restorePendingAvatar() {
+        guard !VoiceReviewTesting.usesIsolatedStorage,
+              let data = UserDefaults.standard.data(forKey: Self.personalizationKey(userID) + ".pendingAvatar"),
+              let avatar = try? JSONDecoder().decode(ProfileAvatar.self, from: data) else { return }
+        if personalization.avatar != avatar { personalization.avatar = avatar }
+        avatarSaveQueue.submit(avatar)
+    }
+
     func setAvatar(_ avatar: ProfileAvatar) async throws {
         var updated = personalization
         updated.avatar = avatar
@@ -267,31 +322,45 @@ final class AccountSyncController: ObservableObject {
                 let user = try await client.auth.update(user: UserAttributes(data: metadata))
                 saved = Self.personalization(from: user.userMetadata)
             }
+            try Task.checkCancellation()
             guard userID == ownerID else { return }
-            personalization = saved
-            cachePersonalization()
-            personalizationError = nil
+            // Do not flash an earlier server response over a newer local selection.
+            if let latestAvatar = avatarSaveQueue.pending { saved.avatar = latestAvatar }
+            if personalization != saved {
+                personalization = saved
+                cachePersonalization()
+            }
+            if personalizationError != nil { personalizationError = nil }
             if let realtimeChannel {
                 try? await realtimeChannel.broadcast(event: "profile_changed", message: ["device_id": deviceID])
             }
         } catch {
-            if userID == ownerID { personalizationError = "Не удалось сохранить настройки профиля" }
+            if userID == ownerID, !Task.isCancelled { personalizationError = "Не удалось сохранить настройки профиля" }
             throw error
         }
     }
 
     func refreshPersonalization() async {
+        if avatarSaveQueue.pending != nil {
+            avatarSaveQueue.retry()
+            return
+        }
         guard let client, let ownerID = userID, !isSavingPersonalization else { return }
         let revision = personalizationRevision
         do {
             let user = try await client.auth.user()
             guard userID == ownerID, user.id.uuidString.lowercased() == ownerID,
                   revision == personalizationRevision, !isSavingPersonalization else { return }
-            personalization = Self.personalization(from: user.userMetadata)
-            cachePersonalization()
-            personalizationError = nil
+            let refreshed = Self.personalization(from: user.userMetadata)
+            if personalization != refreshed {
+                personalization = refreshed
+                cachePersonalization()
+            }
+            if personalizationError != nil { personalizationError = nil }
         } catch {
-            if userID == ownerID { personalizationError = "Не удалось обновить профиль. Сохранён локальный аватар." }
+            guard !Task.isCancelled else { return }
+            let message = "Не удалось обновить профиль. Сохранён локальный аватар."
+            if userID == ownerID, personalizationError != message { personalizationError = message }
         }
     }
 
@@ -417,12 +486,15 @@ final class AccountSyncController: ObservableObject {
     private func setSession(userID: UUID, email: String?) async {
         let nextUserID = userID.uuidString.lowercased()
         if self.userID != nextUserID {
+            avatarSaveQueue.reset()
+            avatarSaveError = nil
             await stopRealtime()
             linkSyncError = nil
         }
         self.userID = nextUserID
         personalizationRevision += 1
         personalization = Self.cachedPersonalization(ownerID: nextUserID)
+        if avatarSaveQueue.pending == nil { restorePendingAvatar() }
         self.email = email
         rememberEmail(email)
         state = .ready
@@ -431,8 +503,13 @@ final class AccountSyncController: ObservableObject {
     }
 
     private func setCachedSession(userID: UUID, email: String?) {
+        if self.userID != userID.uuidString.lowercased() {
+            avatarSaveQueue.reset()
+            avatarSaveError = nil
+        }
         self.userID = userID.uuidString.lowercased()
         personalization = Self.cachedPersonalization(ownerID: self.userID)
+        restorePendingAvatar()
         self.email = email
         rememberEmail(email)
         state = .ready

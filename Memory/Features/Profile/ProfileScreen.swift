@@ -52,6 +52,9 @@ struct ProfileScreen: View {
         .background(MemoryTheme.background)
         .task(id: isVisible) {
             guard isVisible else { return }
+            // Keep account publications and network setup outside the page transition.
+            do { try await Task.sleep(for: .milliseconds(350)) }
+            catch { return }
             await account.refreshPersonalization()
         }
         .onChange(of: isVisible) { _, visible in if !visible { navigate(.profile) } }
@@ -98,21 +101,11 @@ struct ProfileScreen: View {
                         }
                 }
                 .buttonStyle(.plain).accessibilityLabel("Изменить аватар")
-                .popover(isPresented: $showsAvatar, arrowEdge: .top) {
-#if os(iOS)
-                    ScrollView {
-                        AvatarEditor(avatar: account.personalization.avatar)
-                            .frame(maxWidth: .infinity)
-                    }
-                        .scrollBounceBehavior(.basedOnSize)
-                        .presentationCompactAdaptation(.sheet)
-                        .presentationBackground(MemoryTheme.card)
-                        .presentationDetents([.height(400), .large])
-                        .presentationDragIndicator(.visible)
-#else
-                    AvatarEditor(avatar: account.personalization.avatar)
-                        .presentationBackground(MemoryTheme.card)
-#endif
+                .accessibilityValue("\(account.personalization.avatar.animal.title), \(account.personalization.avatar.fur.title), \(account.personalization.avatar.tint.title)")
+                .popover(isPresented: $showsAvatar, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                    AvatarEditor()
+                        .presentationCompactAdaptation(.popover)
+                        .presentationBackground(.ultraThinMaterial)
                 }
                 Text(account.email ?? "Локальный профиль")
                     .font(.system(size: 22, weight: .medium)).multilineTextAlignment(.center)
