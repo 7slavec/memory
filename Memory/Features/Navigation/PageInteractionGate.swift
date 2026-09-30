@@ -16,7 +16,7 @@ final class PageInteractionGate {
     func end(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         guard dragging else { return }
         dragging = false
-        blockedUntil = now + 0.3
+        blockedUntil = now + MemoryMotion.postSwipeTapCooldown
     }
 
     func isSuppressed(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {

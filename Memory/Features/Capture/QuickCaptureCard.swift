@@ -189,15 +189,6 @@ struct QuickCaptureCard: View {
             }
 #endif
         }
-        .overlay(alignment: .bottom) {
-            if isHome {
-                sharedCaptureChrome
-                    .frame(maxWidth: .infinity)
-                    .memoryPageVisibility(isRecordsPage && !isRecordsComposerPresented &&
-                                          !externalKeyboardVisible && pendingVoiceClarification == nil,
-                                          hiddenX: -MemoryMotion.pageDistance)
-            }
-        }
         .safeAreaInset(edge: .bottom, spacing: 18) {
             if isHome,
                pendingVoiceClarification == nil {
@@ -213,6 +204,17 @@ struct QuickCaptureCard: View {
                     .memoryPageVisibility(!isRecordsPage || isRecordsComposerPresented,
                                           hiddenX: MemoryMotion.pageDistance)
                 }
+        }
+        // Outside the composer's inset: its retained (hidden) layout must not
+        // lift the records action away from the bottom safe-area edge.
+        .overlay(alignment: .bottom) {
+            if isHome {
+                sharedCaptureChrome
+                    .frame(maxWidth: .infinity)
+                    .memoryPageVisibility(isRecordsPage && !isRecordsComposerPresented &&
+                                          !externalKeyboardVisible && pendingVoiceClarification == nil,
+                                          hiddenX: -MemoryMotion.pageDistance)
+            }
         }
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)
         .animation(reduceMotion ? nil : MemoryTheme.motion, value: voiceInput.isListening)

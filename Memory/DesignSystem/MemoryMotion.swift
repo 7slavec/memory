@@ -2,8 +2,9 @@ import SwiftUI
 
 /// One owner per transition. Navigation never animates header height, padding or scroll geometry.
 enum MemoryMotion {
-    static let pageDuration = 0.24
-    static let panelDuration = 0.12
+    static let pageDuration = 0.12
+    static let panelDuration = 0.08
+    static let postSwipeTapCooldown = pageDuration + 0.04
     static let pageDistance: CGFloat = 32
     static let mobileHeaderHeight: CGFloat = 72
     static func page(reduceMotion: Bool) -> Animation {

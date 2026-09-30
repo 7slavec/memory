@@ -69,6 +69,35 @@ final class MemoryUITests: XCTestCase {
     }
 
 #if os(iOS)
+    @MainActor func testRecordsAddButtonStaysInBottomTrailingSafeArea() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-profile", "--uitest-filled-records"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Назад"].waitForExistence(timeout: 10))
+        app.buttons["Назад"].tap()
+        let orb = app.buttons["homeVoiceOrb"]
+        XCTAssertTrue(orb.waitForExistence(timeout: 5))
+        orb.swipeRight()
+        XCTAssertTrue(app.buttons["На главный экран"].waitForExistence(timeout: 5))
+        let addButton = app.buttons["Добавить напоминание"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
+        let windowFrame = app.windows.firstMatch.frame
+        let buttonFrame = addButton.frame
+        let bottomGap = windowFrame.maxY - buttonFrame.maxY
+        XCTAssertGreaterThanOrEqual(bottomGap, 10, "window=\(windowFrame), button=\(buttonFrame)")
+        XCTAssertLessThan(bottomGap, 70, "window=\(windowFrame), button=\(buttonFrame)")
+        XCTAssertEqual(windowFrame.maxX - buttonFrame.maxX, 22, accuracy: 2)
+        let beforeScroll = addButton.frame
+        app.swipeUp()
+        XCTAssertEqual(addButton.frame.minY, beforeScroll.minY, accuracy: 1)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Records action in lower right safe area"
+        shot.lifetime = .keepAlways
+        add(shot)
+        addButton.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    }
+
     @MainActor func testMainPageMotionAndAnchoredAvatar() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-profile", "--uitest-filled-records"]
