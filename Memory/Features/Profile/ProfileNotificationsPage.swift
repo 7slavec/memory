@@ -74,6 +74,8 @@ struct ProfileNotificationsPage: View {
             }
 #if os(macOS)
             .menuStyle(.borderlessButton)
+            // The label already owns the chevron inside its capsule.
+            .menuIndicator(.hidden)
 #endif
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel("\(title): время уведомления")
