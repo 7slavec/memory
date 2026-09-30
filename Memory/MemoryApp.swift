@@ -215,11 +215,22 @@ struct MemoryApp: App {
                     .environmentObject(account)
             }
             .preferredColorScheme(appAppearance.colorScheme)
+#if os(macOS)
+            .onAppear { MacQuickCaptureController.shared.configure(container: sharedModelContainer, account: account) }
+            .onChange(of: account.userID) { _, _ in MacQuickCaptureController.shared.resetForAccountChange() }
+#endif
         }
         .modelContainer(sharedModelContainer)
 #if os(macOS)
         .defaultSize(width: 1080, height: 760)
         .windowResizability(.contentMinSize)
+        .commands { MacQuickCaptureCommands() }
+#endif
+#if os(macOS)
+        Settings {
+            MacQuickCaptureSettings().padding(24).frame(width: 480)
+                .background(MemoryTheme.background).preferredColorScheme(appAppearance.colorScheme)
+        }
 #endif
     }
 }

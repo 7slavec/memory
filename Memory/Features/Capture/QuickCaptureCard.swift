@@ -36,6 +36,7 @@ enum QuickCapturePresentation {
 #if os(macOS)
     case desktopWorkspace
     case desktopInline
+    case floating
 #endif
 }
 
@@ -111,6 +112,7 @@ struct QuickCaptureCard: View {
     let priorityLinkedCount: Int
     let onOpenPriorityLinkedRecord: (Item) -> Void
     let autofocus: Bool
+    let activation: CaptureActivation?
     let detailCommitSignal: Int
     let remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)?
     let onTogglePriority: () -> Void
@@ -135,6 +137,7 @@ struct QuickCaptureCard: View {
         priorityLinkedCount: Int = 0,
         onOpenPriorityLinkedRecord: @escaping (Item) -> Void = { _ in },
         autofocus: Bool = false,
+        activation: CaptureActivation? = nil,
         detailCommitSignal: Int = 0,
         remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)? = nil,
         onTogglePriority: @escaping () -> Void = {},
@@ -159,6 +162,7 @@ struct QuickCaptureCard: View {
         self.priorityLinkedCount = priorityLinkedCount
         self.onOpenPriorityLinkedRecord = onOpenPriorityLinkedRecord
         self.autofocus = autofocus
+        self.activation = activation
         self.detailCommitSignal = detailCommitSignal
         self.remoteVoiceInterpreter = remoteVoiceInterpreter
         self.onTogglePriority = onTogglePriority
@@ -250,6 +254,23 @@ struct QuickCaptureCard: View {
             guard autofocus else { return }
             DispatchQueue.main.async {
                 focusedField = .title
+            }
+        }
+        .onChange(of: activation) { _, command in
+            guard let command else { return }
+            switch command.mode {
+            case .text:
+                guard !isVoicePreviewActive, pendingVoiceClarification == nil else { return }
+                focusedField = .title
+            case .voice:
+                guard !isVoicePreviewActive, pendingVoiceClarification == nil else { return }
+                handleVoiceTap()
+            case .suspend:
+                shouldSubmitVoiceWhenStopped = false
+                voiceSubmissionTask?.cancel()
+                isFinalizingVoiceSubmission = false
+                voiceInput.stop()
+                focusedField = nil
             }
         }
         .onChange(of: details) { oldValue, newValue in
@@ -402,7 +423,7 @@ struct QuickCaptureCard: View {
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(trimmedDraft.isEmpty)
+                    .disabled(trimmedDraft.isEmpty || isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
                     .accessibilityLabel("Добавить напоминание")
                 } else if isDocked {
                     voiceButton(size: compactControlSize)
@@ -431,7 +452,7 @@ struct QuickCaptureCard: View {
                     .textInputAutocapitalization(.sentences)
 #endif
 
-                if !isDocked && presentation == .standard {
+                if !isDocked && (presentation == .standard || isFloating) {
                     voiceButton(size: compactControlSize)
                 }
 
@@ -455,6 +476,11 @@ struct QuickCaptureCard: View {
             }
 
             captureMetadataChips
+
+            if isFloating {
+                if pendingVoiceClarification != nil { voiceClarificationCard }
+                else if isFinalizingVoiceSubmission { voiceProcessingStatus }
+            }
 
             if isDescriptionPresented {
                 TextField("Описание, ссылка или важные детали", text: $details, axis: .vertical)
@@ -846,6 +872,7 @@ struct QuickCaptureCard: View {
     }
 
     private func handleVoiceTap() {
+        guard !isFinalizingVoiceSubmission, pendingVoiceClarification == nil else { return }
         dismissKeyboard()
 
         if voiceInput.isListening {
@@ -1000,7 +1027,14 @@ struct QuickCaptureCard: View {
 
     private var usesMinimalDesktopChrome: Bool {
 #if os(macOS)
-        presentation == .desktopInline
+        presentation == .desktopInline || presentation == .floating
+#else
+        false
+#endif
+    }
+    private var isFloating: Bool {
+#if os(macOS)
+        presentation == .floating
 #else
         false
 #endif
@@ -1124,6 +1158,7 @@ struct QuickCaptureCard: View {
             calendar: calendar
         )
         let normalizedDetails = Item.normalizedDetails(trimmedDetails)
+        guard !Task.isCancelled else { return }
         let fallbackDate = preset.date
         if let interpreted, interpreted.entries.count > 1 {
             let reconciledEntries = interpreted.entries.map { entry -> VoiceCaptureEntry in
@@ -1272,6 +1307,9 @@ struct QuickCaptureCard: View {
                 dueDate: dueDate,
                 referenceDate: referenceDate
             )
+        } else {
+            draft = voiceDraft.transcript
+            self.details = details ?? ""
         }
     }
 
@@ -1360,7 +1398,12 @@ struct QuickCaptureCard: View {
     }
 
     private func submit() {
+        guard !isFinalizingVoiceSubmission,
+              !shouldSubmitVoiceWhenStopped,
+              pendingVoiceClarification == nil else { return }
         guard !trimmedDraft.isEmpty else { return }
+        // Enter can arrive before the preview debounce; commit the current text, never an old preview.
+        smartResult = ignoredSmartExpression == draft ? nil : NaturalLanguageDateParser.parse(trimmedDraft)
         if effectiveEntryKind == .event, resolvedDueDate == nil {
             openDetailedEditor()
             return
@@ -1370,8 +1413,9 @@ struct QuickCaptureCard: View {
         voiceSubmissionTask?.cancel()
         smartParsingTask?.cancel()
         voiceInput.stop()
+        let savedID: UUID?
         if let smartResult {
-            _ = onAdd(
+            savedID = onAdd(
                 smartResult.title,
                 Item.normalizedDetails(trimmedDetails),
                 effectiveEntryKind,
@@ -1380,7 +1424,7 @@ struct QuickCaptureCard: View {
                 smartResult.reminderOffsets.isEmpty ? nil : smartResult.reminderOffsets
             )
         } else {
-            _ = onAdd(
+            savedID = onAdd(
                 trimmedDraft,
                 Item.normalizedDetails(trimmedDetails),
                 effectiveEntryKind,
@@ -1389,6 +1433,7 @@ struct QuickCaptureCard: View {
                 nil
             )
         }
+        guard savedID != nil else { return }
         draft = ""
         details = ""
         isDescriptionPresented = false

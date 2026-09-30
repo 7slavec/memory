@@ -5,6 +5,7 @@ import Speech
 
 @MainActor
 final class VoiceInputController: ObservableObject {
+    private static weak var activeRecorder: VoiceInputController?
     @Published private(set) var isListening = false
     @Published private(set) var transcript = ""
     @Published var errorMessage: String?
@@ -15,16 +16,30 @@ final class VoiceInputController: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var initialText = ""
     private var hasAudioTap = false
+    private var generation = UUID()
+    private var isStarting = false
+    private let speechAuthorization: (() async -> Bool)?
+    private let microphoneAuthorization: (() async -> Bool)?
+
+    init(speechAuthorization: (() async -> Bool)? = nil,
+         microphoneAuthorization: (() async -> Bool)? = nil) {
+        self.speechAuthorization = speechAuthorization
+        self.microphoneAuthorization = microphoneAuthorization
+    }
 
     func toggle(currentText: String) async {
         if isListening {
             stop()
         } else {
+            guard !isStarting else { return }
             await start(currentText: currentText)
         }
     }
 
     func stop() {
+        if Self.activeRecorder === self { Self.activeRecorder = nil }
+        generation = UUID()
+        isStarting = false
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -47,13 +62,31 @@ final class VoiceInputController: ObservableObject {
     }
 
     private func start(currentText: String) async {
+        if let active = Self.activeRecorder, active !== self {
+            errorMessage = "Диктовка уже идёт в другом окне Norka. Сначала завершите её."
+            return
+        }
+        stop()
+        Self.activeRecorder = self
+        let requestID = generation
+        isStarting = true
+        defer {
+            if generation == requestID {
+                isStarting = false
+                if !isListening, Self.activeRecorder === self { Self.activeRecorder = nil }
+            }
+        }
         errorMessage = nil
 
-        guard await requestSpeechAuthorization() else {
+        let speechAllowed = await requestSpeechAuthorization()
+        guard generation == requestID, !Task.isCancelled else { return }
+        guard speechAllowed else {
             errorMessage = "Разрешите Norka распознавать речь в системных настройках."
             return
         }
-        guard await requestMicrophoneAuthorization() else {
+        let microphoneAllowed = await requestMicrophoneAuthorization()
+        guard generation == requestID, !Task.isCancelled else { return }
+        guard microphoneAllowed else {
             errorMessage = "Разрешите Norka доступ к микрофону в системных настройках."
             return
         }
@@ -62,7 +95,6 @@ final class VoiceInputController: ObservableObject {
             return
         }
 
-        stop()
         initialText = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = initialText
 
@@ -103,7 +135,7 @@ final class VoiceInputController: ObservableObject {
 
             recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self, self.generation == requestID else { return }
                     if let spokenText = result?.bestTranscription.formattedString,
                        !spokenText.isEmpty {
                         self.transcript = self.combinedText(with: spokenText)
@@ -128,6 +160,7 @@ final class VoiceInputController: ObservableObject {
     }
 
     private func requestSpeechAuthorization() async -> Bool {
+        if let speechAuthorization { return await speechAuthorization() }
         let status = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { status in
                 continuation.resume(returning: status)
@@ -137,6 +170,7 @@ final class VoiceInputController: ObservableObject {
     }
 
     private func requestMicrophoneAuthorization() async -> Bool {
+        if let microphoneAuthorization { return await microphoneAuthorization() }
 #if os(iOS)
         return await AVAudioApplication.requestRecordPermission()
 #elseif os(macOS)

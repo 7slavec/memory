@@ -14,6 +14,7 @@
 | Первый запуск | приветствие → вход / регистрация / локальный режим → приложение | `Memory/MemoryApp.swift`, `Memory/AccountView.swift` |
 | Главная | сфера → слушает → обрабатывает → одна запись или список результатов | `Features/Capture/QuickCaptureCard.swift`, `VoiceInputController.swift`, `VoiceInterpretation.swift`, `ContentView.swift` |
 | Ручное создание | поле → текст и подсказки → отправка или раскрытие полного редактора | `Features/Capture/QuickCaptureCard.swift`, `ItemEditorView.swift`; сохранение — `ContentView.addItem` |
+| Быстрый ввод Mac | глобальное сочетание → отдельная панель → текст / диктовка / review | `Features/Capture/MacQuickCapture*`, `MacCaptureShortcut`; контракт и границы проверки — `docs/MAC-QUICK-CAPTURE.md` |
 | Несколько записей | автосоздание валидных результатов → компактный список → редактор отдельной записи → список → готово / сохранить изменения / отменить создание | `VoiceBatchReviewView.swift`, `Features/VoiceReview/VoiceBatchReviewSession.swift`; persistence — `ContentView` |
 | Все записи | поиск → Просрочено / Сегодня / Завтра / На неделе / Позже → редактор | `ContentView`: `allItemsContent`, `AllItemsGroup`, `taskRows` |
 | Входящие | все записи → входящие без срока → редактор → назад | `ContentView`: `mobileInboxContent`, `desktopInboxContent` |

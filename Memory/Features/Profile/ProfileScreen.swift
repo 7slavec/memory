@@ -35,6 +35,9 @@ struct ProfileScreen: View {
                         switch page {
                         case .profile: EmptyView()
                         case .notifications: profileScroll { ProfileNotificationsPage() }
+#if os(macOS)
+                        case .quickCapture: profileScroll { MacQuickCaptureSettings() }
+#endif
                         case .sync: profileScroll { synchronization }
                         case .archive: archiveContent
                         case .voiceLab: VoiceLabView(showsHeader: false) { navigate(.profile) }
@@ -120,6 +123,9 @@ struct ProfileScreen: View {
 
             VStack(spacing: 0) {
                 ProfileNavigationRow(title: "Уведомления", icon: "bell") { navigate(.notifications) }
+#if os(macOS)
+                ProfileNavigationRow(title: "Быстрый ввод", icon: "keyboard") { navigate(.quickCapture) }
+#endif
                 ProfileThemePicker()
             }.memoryCard()
 
