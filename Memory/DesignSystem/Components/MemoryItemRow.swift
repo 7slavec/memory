@@ -36,14 +36,14 @@ struct MemoryItemRow: View {
                 .anchorPreference(key: MemoryLinkControlAnchor.self, value: .bounds) { $0 }
             }
         }
-        .padding(18)
+        .padding(MemoryDensity.recordPadding)
         .foregroundStyle(item.isEvent ? MemoryTheme.onEventCard : MemoryTheme.accent)
         .background(item.isEvent ? (hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
                     : (hovered ? MemoryTheme.raised : MemoryTheme.card),
-                    in: RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
+                    in: RoundedRectangle(cornerRadius: MemoryDensity.recordRadius))
         .overlay {
             if isOverdue {
-                RoundedRectangle(cornerRadius: MemoryTheme.cardRadius)
+                RoundedRectangle(cornerRadius: MemoryDensity.recordRadius)
                     .strokeBorder(MemoryTheme.danger.opacity(0.45), lineWidth: 1)
                     .allowsHitTesting(false)
             }
@@ -67,7 +67,7 @@ struct MemoryItemRow: View {
     private func timeColumn(_ date: Date) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(MemoryDateFormatting.time(date))
-                .font(.system(size: 30, weight: .regular)).tracking(-1.2).monospacedDigit()
+                .font(.system(size: MemoryDensity.recordTime, weight: .regular)).tracking(-1.2).monospacedDigit()
             if item.isEvent, let end = item.endDate {
                 HStack(spacing: 5) {
                     Capsule().fill(MemoryTheme.onEventCard.opacity(0.3)).frame(width: 2, height: 16)
@@ -81,14 +81,14 @@ struct MemoryItemRow: View {
     }
 
     private var copy: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: MemoryDensity.recordCopyGap) {
             Text(item.title.isEmpty ? "Без названия" : item.title)
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: MemoryDensity.recordTitle, weight: .semibold))
                 .strikethrough(item.isCompleted)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
             if let details = item.details, !details.isEmpty {
-                Text(details).font(.system(size: 14))
+                Text(details).font(.system(size: MemoryDensity.recordBody))
                     .opacity(0.72).lineLimit(2).multilineTextAlignment(.leading)
             }
             if let date = item.dueDate {

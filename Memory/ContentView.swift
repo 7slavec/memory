@@ -1793,7 +1793,7 @@ struct ContentView: View {
 
     private func taskRows(_ source: [Item], linkIndex: RecordLinkIndex? = nil) -> some View {
         let index = linkIndex ?? RecordLinkIndex(items: items, links: recordLinks, ownerID: account.userID)
-        return LazyVStack(spacing: 12) {
+        return LazyVStack(spacing: MemoryDensity.recordGap) {
             ForEach(source, id: \.persistentModelID) { item in
                 MemoryItemRow(
                     item: item,

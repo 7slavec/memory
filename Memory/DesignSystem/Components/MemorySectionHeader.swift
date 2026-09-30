@@ -9,7 +9,7 @@ struct MemorySectionHeader: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(title).font(.system(size: 20, weight: .semibold))
+            Text(title).font(.system(size: MemoryDensity.sectionTitle, weight: .semibold))
             Text("\(count)").font(.system(size: 13)).foregroundStyle(.secondary).monospacedDigit()
             Spacer()
         }

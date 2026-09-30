@@ -65,8 +65,8 @@ struct ProfileScreen: View {
 
     private func profileScroll<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         ScrollView {
-            content().frame(maxWidth: 560)
-                .padding(.horizontal, 22).padding(.top, 24).padding(.bottom, 32)
+            content().frame(maxWidth: MemoryDensity.profileWidth)
+                .padding(.horizontal, 22).padding(.top, MemoryDensity.profileTop).padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
         }
     }
@@ -91,10 +91,10 @@ struct ProfileScreen: View {
     }
 
     private var overview: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 16) {
+        VStack(spacing: MemoryDensity.profileGap) {
+            VStack(spacing: MemoryDensity.profileGap) {
                 Button { showsAvatar = true } label: {
-                    ProfileAvatarView(avatar: account.personalization.avatar, size: 96)
+                    ProfileAvatarView(avatar: account.personalization.avatar, size: MemoryDensity.avatar)
                         .overlay(alignment: .bottomTrailing) {
                             Image(systemName: "pencil").font(.system(size: 12, weight: .medium))
                                 .frame(width: 28, height: 28).background(MemoryTheme.raised, in: Circle())
@@ -108,7 +108,7 @@ struct ProfileScreen: View {
                         .presentationBackground(.ultraThinMaterial)
                 }
                 Text(account.email ?? "Локальный профиль")
-                    .font(.system(size: 22, weight: .medium)).multilineTextAlignment(.center)
+                    .font(.system(size: MemoryDensity.profileTitle, weight: .medium)).multilineTextAlignment(.center)
                     .textSelection(.enabled)
                 Button { navigate(.sync) } label: {
                     Label(account.profileStatusText, systemImage: account.profileSyncSymbol)
@@ -116,7 +116,7 @@ struct ProfileScreen: View {
                 }
                 .buttonStyle(.plain).accessibilityHint("Открывает состояние синхронизации")
             }
-            .frame(maxWidth: .infinity).padding(.bottom, 16)
+            .frame(maxWidth: .infinity).padding(.bottom, MemoryDensity.profileGap)
 
             VStack(spacing: 0) {
                 ProfileNavigationRow(title: "Уведомления", icon: "bell") { navigate(.notifications) }
@@ -147,15 +147,15 @@ struct ProfileScreen: View {
                     Text(account.isSignedIn ? "Выйти" : "Войти в аккаунт")
                 }.frame(maxWidth: .infinity)
             }
-            .buttonStyle(MemoryActionStyle())
+            .buttonStyle(MemoryActionStyle(compact: MemoryDensity.compactActions))
             .disabled(isWorking || account.isSavingPersonalization)
-            .padding(.top, 16)
+            .padding(.top, MemoryDensity.profileGap)
         }
     }
 
     private var synchronization: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 16) {
+        VStack(spacing: MemoryDensity.profileGap) {
+            VStack(spacing: MemoryDensity.profileGap) {
                 Image(systemName: account.profileSyncSymbol).font(.system(size: 38))
                 Text(account.profileStatusText).font(.system(size: 20, weight: .medium))
                 if let message = account.personalizationError ?? account.linkSyncError {
@@ -173,9 +173,9 @@ struct ProfileScreen: View {
                         isWorking = false
                     }
                 } label: { Label("Синхронизировать", systemImage: "arrow.triangle.2.circlepath") }
-                    .buttonStyle(MemoryActionStyle(prominent: true)).disabled(isWorking || account.state == .syncing)
+                    .buttonStyle(MemoryActionStyle(prominent: true, compact: MemoryDensity.compactActions)).disabled(isWorking || account.state == .syncing)
             } else {
-                Button("Войти в аккаунт", action: onSignIn).buttonStyle(MemoryActionStyle(prominent: true))
+                Button("Войти в аккаунт", action: onSignIn).buttonStyle(MemoryActionStyle(prominent: true, compact: MemoryDensity.compactActions))
             }
         }
     }

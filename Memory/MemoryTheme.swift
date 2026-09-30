@@ -76,15 +76,16 @@ enum MemoryTheme {
 /// Shared neutral control: geometry stays stable on hover and press.
 struct MemoryActionStyle: ButtonStyle {
     var prominent = false
+    var compact = false
     @State private var hovered = false
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 15, weight: .medium))
+            .font(.system(size: compact ? 13 : 15, weight: .medium))
             .foregroundStyle(prominent ? MemoryTheme.onAccent : MemoryTheme.accent)
             .padding(.horizontal, 18)
-            .frame(minHeight: 44)
+            .frame(minHeight: compact ? 32 : 44)
             .background(prominent ? MemoryTheme.accent : (hovered ? MemoryTheme.raised : MemoryTheme.card), in: Capsule())
             .opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.78 : hovered ? 0.9 : 1)
             .onHover { hovered = $0 }

@@ -42,7 +42,7 @@ struct MemoryLinkCircle: View {
                         .offset(x: 4, y: -3)
                 }
             }
-            .frame(width: 44, height: 44)
+            .frame(width: MemoryDensity.recordLinkTarget, height: MemoryDensity.recordLinkTarget)
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Связанные записи: \(count + 1)")

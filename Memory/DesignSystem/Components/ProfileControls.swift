@@ -25,16 +25,16 @@ struct ProfileSettingsRow<Accessory: View>: View {
     @ViewBuilder var accessory: () -> Accessory
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 18, weight: .regular))
+            Image(systemName: icon).font(.system(size: MemoryDensity.rowIcon, weight: .regular))
                 .frame(width: 24).accessibilityHidden(true)
-            Text(title).font(.system(size: 16, weight: .medium))
+            Text(title).font(.system(size: MemoryDensity.rowTitle, weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             accessory()
         }
         .foregroundStyle(MemoryTheme.accent)
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .frame(minHeight: 60)
+        .padding(.horizontal, MemoryDensity.rowPadding).padding(.vertical, MemoryDensity.rowVerticalPadding)
+        .frame(minHeight: MemoryDensity.rowHeight)
         .contentShape(Rectangle())
     }
 }
@@ -69,7 +69,8 @@ struct ProfileThemePicker: View {
                         ZStack {
                             Circle().fill(option == .dark ? Color(white: 0.13) : .white)
                             if option == .system {
-                                Rectangle().fill(Color(white: 0.13)).frame(width: 17).offset(x: 8.5)
+                                Rectangle().fill(Color(white: 0.13))
+                                    .frame(width: MemoryDensity.themeCircle / 2).offset(x: MemoryDensity.themeCircle / 4)
                             }
                             if appearance == option {
                                 Image(systemName: "checkmark").font(.system(size: 13, weight: .bold))
@@ -77,11 +78,12 @@ struct ProfileThemePicker: View {
                                     .padding(3).background(option == .system ? Color.white : .clear, in: Circle())
                             }
                         }
-                        .frame(width: 34, height: 34).clipShape(Circle())
+                        .frame(width: MemoryDensity.themeCircle, height: MemoryDensity.themeCircle).clipShape(Circle())
                         .overlay(Circle().strokeBorder(Color.gray.opacity(0.4), lineWidth: 1))
                         .padding(4)
                         .overlay(Circle().strokeBorder(appearance == option ? MemoryTheme.accent : .clear, lineWidth: 1.5))
-                        .frame(width: 44, height: 44)
+                        .frame(width: MemoryDensity.themeTarget, height: MemoryDensity.themeTarget)
+                        .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Тема: \(option.title)")

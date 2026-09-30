@@ -17,7 +17,7 @@ struct ProfileNotificationsPage: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: MemoryDensity.profileGap) {
             VStack(spacing: 0) {
                 ProfileSettingsRow(title: "Уведомления", icon: "bell") {
                     Toggle("Уведомления", isOn: Binding(get: { enabled }, set: setEnabled))
@@ -69,7 +69,7 @@ struct ProfileNotificationsPage: View {
                     Text(ReminderLeadTime(rawValue: account.defaultReminderMinutes(for: kind))?.compactTitle ?? "В момент")
                         .font(.system(size: 14)).lineLimit(1).minimumScaleFactor(0.85)
                     Image(systemName: "chevron.down").font(.system(size: 10, weight: .medium))
-                }.padding(.horizontal, 10).frame(minHeight: 44)
+                }.padding(.horizontal, 10).frame(minHeight: MemoryDensity.profileControl)
                     .background(MemoryTheme.raised, in: Capsule())
             }
 #if os(macOS)
