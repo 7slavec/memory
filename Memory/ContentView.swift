@@ -221,7 +221,19 @@ struct ContentView: View {
             if VoiceReviewTesting.isUnitTestHost { return }
             if VoiceReviewTesting.isEnabled {
                 if VoiceReviewTesting.isQuickCaptureEnabled { return }
-                if VoiceReviewTesting.isProfileEnabled {
+                if VoiceReviewTesting.isActiveEventEnabled {
+                    modelContext.insert(Item(title: "Текущее событие для проверки",
+                                             dueDate: .now.addingTimeInterval(-600),
+                                             entryKind: .event,
+                                             endDate: .now.addingTimeInterval(3_600),
+                                             notificationsEnabled: false))
+                    try? modelContext.save()
+#if os(macOS)
+                    desktopSection = .all
+#else
+                    selectedSection = .all
+#endif
+                } else if VoiceReviewTesting.isProfileEnabled {
                     if ProcessInfo.processInfo.arguments.contains("--uitest-filled-records") {
                         for index in 0..<12 {
                             modelContext.insert(Item(
@@ -300,6 +312,7 @@ struct ContentView: View {
                     )
                 },
                 onToggleCompleted: { toggleCompleted($0) },
+                onFinishEvent: { finishEvent($0, title: $1, details: $2, dueDate: $3, reminderOffsets: $4) },
                 onDelete: { delete($0) },
                 onDismiss: { editingItem = nil }
             )
@@ -686,6 +699,7 @@ struct ContentView: View {
                 }
             },
             onToggleCompleted: { toggleCompleted($0) },
+            onFinishEvent: { finishEvent($0, title: $1, details: $2, dueDate: $3, reminderOffsets: $4) },
             onDelete: { delete($0) },
             isCompactDesktopPane: compact,
             isNew: isEditingNewDesktopItem,
@@ -2006,6 +2020,7 @@ struct ContentView: View {
             onSave: { finishVoiceReview(session) },
             onSaveExisting: update,
             onToggleExisting: toggleCompleted,
+            onFinishExisting: finishEvent,
             onDeleteExisting: delete,
             header: {
 #if os(iOS)
@@ -2356,6 +2371,26 @@ struct ContentView: View {
         guard saveChanges() else { return false }
         item.isCompleted ? ReminderScheduler.cancel(id: item.id) : scheduleReminder(for: item)
         account.markLocalChange(modelContext: modelContext)
+        return true
+    }
+
+    @discardableResult private func finishEvent(
+        _ item: Item,
+        title: String,
+        details: String?,
+        dueDate: Date,
+        reminderOffsets: [Int]
+    ) -> Bool {
+        let now = Date.now
+        guard item.isActiveEvent(at: now), dueDate <= now else { return false }
+        item.title = title
+        item.details = Item.normalizedDetails(details)
+        item.dueDate = dueDate
+        item.setReminderOffsets(reminderOffsets)
+        guard item.finishEvent(at: now), saveChanges() else { return false }
+        ReminderScheduler.cancel(id: item.id)
+        account.markLocalChange(modelContext: modelContext)
+        currentDate = now
         return true
     }
 

@@ -16,7 +16,8 @@ enum VoiceReviewTesting {
 
     static var isEnabled: Bool {
 #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--uitest-voice-review") || isLinksEnabled || isProfileEnabled || isQuickCaptureEnabled
+        ProcessInfo.processInfo.arguments.contains("--uitest-voice-review") || isLinksEnabled
+            || isProfileEnabled || isQuickCaptureEnabled || isActiveEventEnabled
 #else
         false
 #endif
@@ -41,6 +42,14 @@ enum VoiceReviewTesting {
     static var isProfileEnabled: Bool {
 #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--uitest-profile")
+#else
+        false
+#endif
+    }
+
+    static var isActiveEventEnabled: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--uitest-active-event")
 #else
         false
 #endif

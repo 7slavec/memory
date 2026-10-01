@@ -76,9 +76,9 @@ struct RemoteTask: Codable, Identifiable, Sendable {
         item.title = title
         item.details = Item.normalizedDetails(details)
         item.timestamp = createdDate
-        item.isCompleted = isCompleted
         item.dueDate = dueAt.flatMap(SupabaseDate.date)
         item.entryKind = entryKind.flatMap(EntryKind.init(rawValue:)) ?? .reminder
+        item.isCompleted = isCompleted
         item.endDate = item.isEvent ? endAt.flatMap(SupabaseDate.date) : nil
         item.setReminderOffsets(notificationsEnabled ? reminderOffsets : [])
         item.completedAt = completedAt.flatMap(SupabaseDate.date)

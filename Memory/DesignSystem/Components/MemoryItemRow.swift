@@ -16,17 +16,29 @@ struct MemoryItemRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 4) {
+        if item.isEvent, item.endDate != nil {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                row(at: context.date)
+            }
+        } else {
+            row(at: .now)
+        }
+    }
+
+    private func row(at now: Date) -> some View {
+        let active = item.isActiveEvent(at: now)
+        return HStack(alignment: .bottom, spacing: 4) {
             Button(action: onEdit) {
                     HStack(alignment: .top, spacing: 12) {
-                        if let date = item.dueDate { timeColumn(date) }
+                        if let date = item.dueDate { timeColumn(date, now: now) }
                         copy
                     }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(item.title), \(item.entryKind.title)\(item.dueDate.map { ", " + MemoryDateFormatting.shortDateTime($0) } ?? "")")
+            .accessibilityLabel(rowAccessibilityLabel(at: now))
+            .accessibilityIdentifier(active ? "activeEventCard" : "recordCard")
             if linkedCount > 0 {
                 Button(action: onOpenLinks ?? onEdit) {
                     MemoryLinkCircle(count: linkedCount, onColor: item.isEvent)
@@ -41,6 +53,12 @@ struct MemoryItemRow: View {
         .background(item.isEvent ? (hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
                     : (hovered ? MemoryTheme.raised : MemoryTheme.card),
                     in: RoundedRectangle(cornerRadius: MemoryDensity.recordRadius))
+        .overlay {
+            if active {
+                ActiveEventPulse(cornerRadius: MemoryDensity.recordRadius)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay {
             if isOverdue {
                 RoundedRectangle(cornerRadius: MemoryDensity.recordRadius)
@@ -64,19 +82,32 @@ struct MemoryItemRow: View {
         }
     }
 
-    private func timeColumn(_ date: Date) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(MemoryDateFormatting.time(date))
-                .font(.system(size: MemoryDensity.recordTime, weight: .regular)).tracking(-1.2).monospacedDigit()
+    private func timeColumn(_ date: Date, now: Date) -> some View {
+        let remaining = item.endDate.flatMap { item.isActiveEvent(at: now) ? EventActivity.remaining(until: $0, at: now) : nil }
+        return VStack(alignment: .leading, spacing: 7) {
+            if let remaining {
+                Text(remaining.display)
+                    .font(.system(size: remaining.hasDays ? MemoryDensity.recordTime - 7 : MemoryDensity.recordTime,
+                                  weight: .medium, design: .rounded))
+                    .tracking(remaining.hasDays ? -0.8 : -1.2)
+                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.85)
+                    .accessibilityLabel(remaining.accessibilityText)
+                    .modifier(ActiveEventCounterPulse())
+            } else {
+                Text(MemoryDateFormatting.time(date))
+                    .font(.system(size: MemoryDensity.recordTime, weight: .regular)).tracking(-1.2).monospacedDigit()
+            }
             if item.isEvent, let end = item.endDate {
                 HStack(spacing: 5) {
                     Capsule().fill(MemoryTheme.onEventCard.opacity(0.3)).frame(width: 2, height: 16)
-                    Text("до \(MemoryDateFormatting.time(end))")
-                        .font(.system(size: 13)).monospacedDigit()
+                    Text(remaining == nil ? "до \(MemoryDateFormatting.time(end))"
+                         : "\(MemoryDateFormatting.time(date))–\(MemoryDateFormatting.time(end))")
+                        .font(.system(size: remaining == nil ? 13 : 11)).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.85)
                 }
             }
         }
-        .fixedSize()
+        .fixedSize(horizontal: true, vertical: false)
         .opacity(item.isCompleted ? 0.55 : 1)
     }
 
@@ -117,5 +148,15 @@ struct MemoryItemRow: View {
         }
         if !item.isEvent, date < .now { return "Просрочено · \(day)" }
         return day
+    }
+
+    private func rowAccessibilityLabel(at now: Date) -> String {
+        var label = "\(item.title), \(item.entryKind.title)"
+        if let date = item.dueDate { label += ", \(MemoryDateFormatting.shortDateTime(date))" }
+        if item.isActiveEvent(at: now), let end = item.endDate,
+           let remaining = EventActivity.remaining(until: end, at: now) {
+            label += ", \(remaining.accessibilityText)"
+        }
+        return label
     }
 }

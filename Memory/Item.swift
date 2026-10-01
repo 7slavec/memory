@@ -196,6 +196,25 @@ final class Item {
         updatedAt = .now
     }
 
+    var isActiveEvent: Bool { isActiveEvent(at: .now) }
+
+    func isActiveEvent(at date: Date) -> Bool {
+        EventActivity.isActive(
+            kind: entryKind, start: dueDate, end: endDate,
+            isCompleted: isCompleted, at: date
+        )
+    }
+
+    @discardableResult
+    func finishEvent(at date: Date) -> Bool {
+        guard isActiveEvent(at: date) else { return false }
+        endDate = date
+        isCompleted = true
+        completedAt = date
+        updatedAt = date
+        return true
+    }
+
     func markDeleted() {
         deletedAt = .now
         updatedAt = deletedAt ?? .now
@@ -211,11 +230,12 @@ extension Item {
     var entryKind: EntryKind {
         get { EntryKind(rawValue: entryKindRaw) ?? .reminder }
         set {
-            entryKindRaw = newValue.rawValue
-            if newValue == .event {
+            if entryKind != newValue {
                 isCompleted = false
                 completedAt = nil
-            } else {
+            }
+            entryKindRaw = newValue.rawValue
+            if newValue == .reminder {
                 endDate = nil
             }
         }

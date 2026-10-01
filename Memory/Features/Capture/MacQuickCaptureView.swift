@@ -126,7 +126,11 @@ struct MacQuickCaptureView: View {
             if isNewDetail { commitSignal += 1 }
             detail = nil
             return true
-        }, onToggleCompleted: { toggle(item) }, onDelete: { remove(item) },
+        }, onToggleCompleted: { toggle(item) },
+            onFinishEvent: { title, details, date, offsets in
+                finishEvent(item, title: title, details: details, dueDate: date, reminderOffsets: offsets)
+            },
+            onDelete: { remove(item) },
             isEmbedded: true, isCompactDesktopPane: true, isNew: isNewDetail,
             saveActionTitle: draftEntryID != nil ? "Готово" : "Сохранить", presentation: .captureWidget,
             widgetMaximumHeight: controller.availableHeight,
@@ -211,6 +215,21 @@ struct MacQuickCaptureView: View {
         item.setCompleted(!item.isCompleted)
         guard commit() else { return false }
         changed([item]); return true
+    }
+
+    private func finishEvent(_ item: Item, title: String, details: String?,
+                             dueDate: Date, reminderOffsets: [Int]) -> Bool {
+        let now = Date.now
+        guard item.ownerID == account.userID, item.deletedAt == nil,
+              item.isActiveEvent(at: now), dueDate <= now else { return false }
+        item.title = title
+        item.details = Item.normalizedDetails(details)
+        item.dueDate = dueDate
+        item.setReminderOffsets(reminderOffsets)
+        guard item.finishEvent(at: now), commit() else { return false }
+        ReminderScheduler.cancel(id: item.id)
+        changed([item])
+        return true
     }
 
     private func remove(_ item: Item) -> Bool {

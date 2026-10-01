@@ -9,6 +9,7 @@ struct RecordEditorFlow: View {
     let item: Item
     let onSave: (Item, String, String?, EntryKind, Date?, Date?, [Int]) -> Bool
     let onToggleCompleted: (Item) -> Bool
+    let onFinishEvent: (Item, String, String?, Date, [Int]) -> Bool
     let onDelete: (Item) -> Bool
     var isCompactDesktopPane = false
     var isNew = false
@@ -28,6 +29,9 @@ struct RecordEditorFlow: View {
                 onSave(current, title, details, kind, date, end, offsets)
             },
             onToggleCompleted: { onToggleCompleted(current) },
+            onFinishEvent: { title, details, date, offsets in
+                onFinishEvent(current, title, details, date, offsets)
+            },
             onDelete: { onDelete(current) },
             isEmbedded: true,
             isCompactDesktopPane: isCompactDesktopPane,

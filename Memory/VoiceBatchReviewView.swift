@@ -12,6 +12,7 @@ struct VoiceBatchReviewView<Header: View>: View {
     let onSave: () -> Bool
     let onSaveExisting: (Item, String, String?, EntryKind, Date?, Date?, [Int]) -> Bool
     let onToggleExisting: (Item) -> Bool
+    let onFinishExisting: (Item, String, String?, Date, [Int]) -> Bool
     let onDeleteExisting: (Item) -> Bool
     @ViewBuilder let header: () -> Header
 
@@ -20,7 +21,8 @@ struct VoiceBatchReviewView<Header: View>: View {
         Group {
             if let externalItem = session.externalItem {
                 RecordEditorFlow(item: externalItem, onSave: onSaveExisting,
-                                 onToggleCompleted: onToggleExisting, onDelete: onDeleteExisting,
+                                 onToggleCompleted: onToggleExisting, onFinishEvent: onFinishExisting,
+                                 onDelete: onDeleteExisting,
                                  onOpenIntercept: { item in
                                      guard session.entries.contains(where: { $0.persistedItemID == item.id }) else { return false }
                                      session.externalItem = nil

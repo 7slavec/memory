@@ -17,6 +17,7 @@ struct ItemEditorView: View {
     let item: Item
     let onSave: (String, String?, EntryKind, Date?, Date?, [Int]) -> Bool
     let onToggleCompleted: () -> Bool
+    let onFinishEvent: ((String, String?, Date, [Int]) -> Bool)?
     let onDelete: () -> Bool
     let onOpenLinkedRecord: ((Item) -> Void)?
     let linkedCount: Int
@@ -59,6 +60,7 @@ struct ItemEditorView: View {
         item: Item,
         onSave: @escaping (String, String?, EntryKind, Date?, Date?, [Int]) -> Bool,
         onToggleCompleted: @escaping () -> Bool,
+        onFinishEvent: ((String, String?, Date, [Int]) -> Bool)? = nil,
         onDelete: @escaping () -> Bool,
         isEmbedded: Bool = false,
         isCompactDesktopPane: Bool = false,
@@ -74,6 +76,7 @@ struct ItemEditorView: View {
         self.item = item
         self.onSave = onSave
         self.onToggleCompleted = onToggleCompleted
+        self.onFinishEvent = onFinishEvent
         self.onDelete = onDelete
         self.isEmbedded = isEmbedded
         self.isCompactDesktopPane = isCompactDesktopPane
@@ -152,6 +155,7 @@ struct ItemEditorView: View {
                                 mobileDeleteButton
                                 Spacer(minLength: 0)
                                 if entryKind == .reminder { mobileCompletionButton }
+                                if showsFinishEventAction { finishEventButton }
                             }
                         }
                     }
@@ -236,6 +240,7 @@ struct ItemEditorView: View {
 
     private var mobilePrimaryContent: some View {
         VStack(alignment: .leading, spacing: 20) {
+            activeEventBadge
             TextField("Что нужно запомнить?", text: $title, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 31, weight: .medium, design: .rounded))
@@ -385,6 +390,7 @@ struct ItemEditorView: View {
                         macKindPicker
                         macScheduleCard
                         macNotificationCard
+                        if showsFinishEventAction { finishEventButton.frame(maxWidth: .infinity) }
                     }
                     if isSaveErrorPresented {
                         Text("Не удалось применить изменения. Проверьте название и даты.")
@@ -481,6 +487,7 @@ struct ItemEditorView: View {
 
     private var macPrimaryContent: some View {
         VStack(alignment: .leading, spacing: isWidget ? 8 : 16) {
+            activeEventBadge
             TextField("Что нужно запомнить?", text: $title, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(
@@ -568,6 +575,7 @@ struct ItemEditorView: View {
                 }
                 .buttonStyle(MemoryActionStyle(prominent: true)).disabled(!canSave)
             }
+            if showsFinishEventAction { finishEventButton }
             if isNew {
                 Button("Отмена", action: cancelEditing).buttonStyle(MemoryActionStyle())
                 Button(saveActionTitle ?? "Создать", action: saveAndDismiss)
@@ -743,6 +751,30 @@ struct ItemEditorView: View {
         entryKind != .event || (hasSchedule && (!hasEventEnd || eventEndDate > scheduledDate))
     }
     private var canSave: Bool { !trimmedTitle.isEmpty && eventRangeIsValid }
+    private var showsFinishEventAction: Bool {
+        !isNew && entryKind == .event && onFinishEvent != nil
+            && !item.isCompleted && item.dueDate != nil && item.endDate != nil
+    }
+
+    @ViewBuilder private var activeEventBadge: some View {
+        if showsFinishEventAction, let start = item.dueDate, let end = item.endDate {
+            ActiveEventBadge(start: start, end: end, compact: isWidget)
+        }
+    }
+
+    private var finishEventButton: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            if item.isActiveEvent(at: context.date) {
+                Button(action: finishEventAndDismiss) {
+                    Label("Завершить", systemImage: "checkmark")
+                        .frame(maxWidth: isWidget ? .infinity : nil)
+                }
+                .buttonStyle(ActiveEventFinishStyle(compact: isWidget))
+                .disabled(!canSave || scheduledDate > context.date)
+                .accessibilityHint("Заменить плановое окончание текущим временем")
+            }
+        }
+    }
 
     private var notificationsEnabledBinding: Binding<Bool> {
         Binding(
@@ -882,6 +914,22 @@ struct ItemEditorView: View {
 
     private func saveToggleAndDismiss() {
         guard persistChanges(), onToggleCompleted() else { isSaveErrorPresented = true; return }
+        closeEditor()
+    }
+
+    private func finishEventAndDismiss() {
+        guard let onFinishEvent, canSave, entryKind == .event, hasSchedule,
+              scheduledDate <= .now,
+              onFinishEvent(trimmedTitle, Item.normalizedDetails(trimmedDetails),
+                            scheduledDate, ReminderLeadTime.normalized(Array(reminderOffsets))) else {
+            isSaveErrorPresented = true
+            return
+        }
+        activeSchedulePicker = nil
+        showsLinks = false
+#if os(iOS)
+        mobileFocusedField = nil
+#endif
         closeEditor()
     }
 

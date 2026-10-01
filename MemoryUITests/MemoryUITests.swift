@@ -13,6 +13,24 @@ import AppKit
 final class MemoryUITests: XCTestCase {
 
 #if os(macOS)
+    @MainActor func testActiveEventShowsCountdownAndFinishesEarly() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-active-event"]
+        app.launch()
+        let card = app.buttons["activeEventCard"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.label.contains("Осталось"))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Active event card on Mac"
+        shot.lifetime = .keepAlways
+        add(shot)
+        card.click()
+        let finish = app.buttons["Завершить"]
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        finish.click()
+        XCTAssertTrue(card.waitForNonExistence(timeout: 5))
+    }
+
     @MainActor func testQuickWidgetCalendarFitsWholeMonth() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-quick-capture", "--uitest-capture-batch"]
