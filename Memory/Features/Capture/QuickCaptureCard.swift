@@ -468,7 +468,12 @@ struct QuickCaptureCard: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...(voiceInput.isListening ? 9 : 3))
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: compactControlSize, alignment: .leading)
+                    // The desktop home actions float over the field instead of
+                    // setting the empty card's height. Keep their text space reserved.
+                    .padding(.trailing, isDesktopWorkspace ? 104 : 0)
+                    .frame(minWidth: 0, maxWidth: .infinity,
+                           minHeight: isDesktopWorkspace ? 0 : compactControlSize,
+                           alignment: .leading)
                     .focused($focusedField, equals: .title)
                     .allowsHitTesting(!voiceInput.isListening && !isFinalizingVoiceSubmission)
                     .accessibilityIdentifier("quickCaptureField")
@@ -482,26 +487,33 @@ struct QuickCaptureCard: View {
                     voiceButton(size: compactControlSize)
                 }
 
-                detailsDisclosureButton(size: compactControlSize)
-                    .opacity(!voiceInput.isListening && isComposerExpanded ? 1 : 0)
-                    .allowsHitTesting(!voiceInput.isListening && isComposerExpanded)
-                    .disabled(voiceInput.isListening || !isComposerExpanded)
-                    .accessibilityHidden(voiceInput.isListening || !isComposerExpanded)
+                if !isDesktopWorkspace {
+                    detailsDisclosureButton(size: compactControlSize)
+                        .opacity(!voiceInput.isListening && isComposerExpanded ? 1 : 0)
+                        .allowsHitTesting(!voiceInput.isListening && isComposerExpanded)
+                        .disabled(voiceInput.isListening || !isComposerExpanded)
+                        .accessibilityHidden(voiceInput.isListening || !isComposerExpanded)
 
-                Button(action: cancelDraft) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: compactControlSize, height: compactControlSize)
-                        .background(Color.secondary.opacity(0.09))
-                        .clipShape(Circle())
+                    cancelButton(size: compactControlSize)
+                        .opacity(showsCancelButton ? 1 : 0)
+                        .allowsHitTesting(showsCancelButton)
+                        .disabled(!showsCancelButton)
+                        .accessibilityHidden(!showsCancelButton)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Отменить ввод")
-                .opacity(showsCancelButton ? 1 : 0)
-                .allowsHitTesting(showsCancelButton)
-                .disabled(!showsCancelButton)
-                .accessibilityHidden(!showsCancelButton)
+            }
+            .overlay(alignment: .trailing) {
+                if isDesktopWorkspace {
+                    HStack(spacing: 12) {
+                        detailsDisclosureButton(size: compactControlSize)
+                        cancelButton(size: compactControlSize)
+                    }
+                    .opacity(desktopWorkspaceActionsVisible ? 1 : 0)
+                    .allowsHitTesting(desktopWorkspaceActionsVisible)
+                    .disabled(!desktopWorkspaceActionsVisible)
+                    .accessibilityHidden(!desktopWorkspaceActionsVisible)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.16),
+                               value: desktopWorkspaceActionsVisible)
+                }
             }
 
             captureMetadataChips
@@ -533,7 +545,8 @@ struct QuickCaptureCard: View {
             }
 
         }
-        .padding(usesMinimalDesktopChrome ? 12 : (isDocked ? 12 : 18))
+        .padding(.horizontal, usesMinimalDesktopChrome ? 12 : (isDocked ? 12 : 18))
+        .padding(.vertical, desktopWorkspacePadding ?? (usesMinimalDesktopChrome ? 12 : (isDocked ? 12 : 18)))
         .modifier(QuickCaptureSurfaceModifier(isMinimal: usesMinimalDesktopChrome))
     }
 
@@ -1137,6 +1150,33 @@ struct QuickCaptureCard: View {
 
     private var compactControlSize: CGFloat { isDocked ? 44 : 40 }
 
+    private var isDesktopWorkspace: Bool {
+#if os(macOS)
+        presentation == .desktopWorkspace
+#else
+        false
+#endif
+    }
+
+    private var desktopWorkspacePadding: CGFloat? { isDesktopWorkspace ? 16 : nil }
+
+    private var desktopWorkspaceActionsVisible: Bool {
+        isDesktopWorkspace && !voiceInput.isListening && !trimmedDraft.isEmpty
+    }
+
+    private func cancelButton(size: CGFloat) -> some View {
+        Button(action: cancelDraft) {
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: size, height: size)
+                .background(Color.secondary.opacity(0.09))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Отменить ввод")
+    }
+
     private var usesMinimalDesktopChrome: Bool {
 #if os(macOS)
         presentation == .desktopInline || presentation == .floating
@@ -1161,7 +1201,7 @@ struct QuickCaptureCard: View {
     }
 
     private var homeActionsVisible: Bool {
-        !voiceInput.isListening && (focusedField == .title || !trimmedDraft.isEmpty)
+        !voiceInput.isListening && !trimmedDraft.isEmpty
     }
 
     private func voiceButton(size: CGFloat) -> some View {
