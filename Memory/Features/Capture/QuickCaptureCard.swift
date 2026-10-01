@@ -118,6 +118,7 @@ struct QuickCaptureCard: View {
     let activation: CaptureActivation?
     let onFloatingModeChange: (Bool) -> Void
     let detailCommitSignal: Int
+    let floatingContentVisible: Bool
     let remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)?
     let onTogglePriority: () -> Void
     let onEditPriority: () -> Void
@@ -143,6 +144,7 @@ struct QuickCaptureCard: View {
         autofocus: Bool = false,
         activation: CaptureActivation? = nil,
         onFloatingModeChange: @escaping (Bool) -> Void = { _ in },
+        floatingContentVisible: Bool = true,
         detailCommitSignal: Int = 0,
         remoteVoiceInterpreter: ((String, Date, Calendar) async throws -> VoiceCaptureResult)? = nil,
         onTogglePriority: @escaping () -> Void = {},
@@ -169,6 +171,7 @@ struct QuickCaptureCard: View {
         self.autofocus = autofocus
         self.activation = activation
         self.onFloatingModeChange = onFloatingModeChange
+        self.floatingContentVisible = floatingContentVisible
         self.detailCommitSignal = detailCommitSignal
         self.remoteVoiceInterpreter = remoteVoiceInterpreter
         self.onTogglePriority = onTogglePriority
@@ -228,10 +231,10 @@ struct QuickCaptureCard: View {
                                           hiddenX: -MemoryMotion.pageDistance)
             }
         }
-        .animation(.spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)
-        .animation(reduceMotion ? nil : MemoryTheme.motion, value: voiceInput.isListening)
-        .animation(reduceMotion ? nil : MemoryTheme.motion, value: isFinalizingVoiceSubmission)
-        .animation(.spring(response: 0.42, dampingFraction: 0.9), value: pendingVoiceClarification != nil)
+        .animation(isFloating ? nil : .spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)
+        .animation(reduceMotion || isFloating ? nil : MemoryTheme.motion, value: voiceInput.isListening)
+        .animation(reduceMotion || isFloating ? nil : MemoryTheme.motion, value: isFinalizingVoiceSubmission)
+        .animation(isFloating ? nil : .spring(response: 0.42, dampingFraction: 0.9), value: pendingVoiceClarification != nil)
         .animation(.easeInOut(duration: 0.22), value: isDescriptionPresented)
         .animation(.spring(response: 0.46, dampingFraction: 0.9), value: isComposerExpanded)
         .onChange(of: draft) { oldValue, newValue in
@@ -264,18 +267,20 @@ struct QuickCaptureCard: View {
                 focusedField = .title
             }
         }
-        .onChange(of: activation) { _, command in
+        .onChange(of: activation, initial: true) { _, command in
             guard let command else { return }
             switch command.mode {
             case .text:
                 floatingSurfaceVisible = true
                 guard !isVoicePreviewActive, pendingVoiceClarification == nil else { return }
+                guard !floatingVoiceMode || trimmedDraft.isEmpty else { return }
                 floatingVoiceMode = false
                 onFloatingModeChange(false)
                 focusedField = .title
             case .voice:
                 floatingSurfaceVisible = true
                 guard !isVoicePreviewActive, pendingVoiceClarification == nil else { return }
+                guard floatingVoiceMode || trimmedDraft.isEmpty else { focusedField = .title; return }
                 floatingVoiceMode = true
                 floatingVoiceAttempted = true
                 onFloatingModeChange(true)
@@ -343,7 +348,8 @@ struct QuickCaptureCard: View {
             voiceInput.stop()
             pendingVoiceClarification = nil
         }
-        .alert("Голосовой ввод", isPresented: isShowingVoiceError) {
+        .alert("Голосовой ввод", isPresented: Binding(get: { !isFloating && isShowingVoiceError.wrappedValue },
+                                                     set: { isShowingVoiceError.wrappedValue = $0 })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(voiceInput.errorMessage ?? "Не удалось распознать речь.")
@@ -528,20 +534,9 @@ struct QuickCaptureCard: View {
 
 #if os(macOS)
     private var floatingBody: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: MemoryWidgetMetrics.gap) {
             if floatingVoiceMode {
                 HStack {
-                    Button {
-                        shouldSubmitVoiceWhenStopped = false
-                        voiceSubmissionTask?.cancel()
-                        voiceInput.stop()
-                        floatingVoiceMode = false
-                        onFloatingModeChange(false)
-                        focusedField = .title
-                    } label: { Image(systemName: "keyboard").frame(width: 28, height: 28) }
-                        .buttonStyle(.plain).help("Продолжить текстом")
-                        .accessibilityLabel("Продолжить текстом")
-                        .disabled(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
                     Spacer()
                     floatingClose
                 }
@@ -552,59 +547,60 @@ struct QuickCaptureCard: View {
                     GlassVoiceOrb(isListening: voiceInput.isListening,
                                   isProcessing: isFinalizingVoiceSubmission,
                                   isPulsing: isVoicePulsing, size: 110,
-                                  isVisible: floatingSurfaceVisible, animatesInBackground: true)
+                                  isVisible: floatingSurfaceVisible && floatingContentVisible, animatesInBackground: true)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .disabled(isFinalizingVoiceSubmission || pendingVoiceClarification != nil)
                 .accessibilityLabel(voiceOrbAccessibilityLabel)
                 .help(voiceInput.isListening ? "Завершить диктовку" : "Начать диктовку")
-                if pendingVoiceClarification != nil {
+                .frame(maxWidth: .infinity)
+                if let error = voiceInput.errorMessage {
+                    Text(error).font(.system(size: 12)).foregroundStyle(MemoryTheme.danger)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if pendingVoiceClarification != nil {
                     voiceClarificationCard
                 } else if isFinalizingVoiceSubmission {
                     Text("Разбираю запись…").font(.system(size: 13)).foregroundStyle(.secondary)
-                        .frame(height: 56)
+                        .frame(maxWidth: .infinity, minHeight: 20)
                 } else if !trimmedDraft.isEmpty {
-                    ScrollView {
-                        Text(draft).font(.system(size: 14)).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .defaultScrollAnchor(.bottom).frame(height: 56)
-                    .accessibilityLabel("Транскрипция")
+                    MacWidgetTranscript(text: draft)
                 } else {
                     Text(voiceInput.isListening ? "Говорите…" : shouldSubmitVoiceWhenStopped
                          ? "Подключаю микрофон…" : floatingVoiceAttempted
                          ? "Не расслышала. Нажмите на сферу, чтобы повторить." : "Нажмите на сферу")
                         .font(.system(size: 13)).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center).frame(height: 56)
+                        .multilineTextAlignment(.center).frame(maxWidth: .infinity, minHeight: 20)
                 }
             } else {
                 HStack(alignment: .center, spacing: 8) {
-                    TextField("Что запомнить?", text: $draft, axis: .vertical)
-                        .textFieldStyle(.plain).font(.system(size: 15)).lineLimit(1...6)
+                    TextField("Что нужно запомнить?", text: $draft, axis: .vertical)
+                        .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...6)
                         .focused($focusedField, equals: .title)
                         .onSubmit(handleSubmitKey)
                         .accessibilityIdentifier("quickCaptureField")
                         .help("Enter — сохранить. Escape — скрыть с сохранением черновика.")
-                    Button {
-                        floatingVoiceMode = true
-                        floatingVoiceAttempted = true
-                        onFloatingModeChange(true)
-                        handleVoiceTap()
-                    } label: { Image(systemName: "mic").frame(width: 28, height: 28) }
-                        .buttonStyle(.plain).help("Диктовать").accessibilityLabel("Голосовой ввод")
                     floatingClose
+                }
+                if !trimmedDraft.isEmpty {
+                    HStack(spacing: 8) {
+                        Text((smartResult?.dueDate).map { MemoryDateFormatting.shortDateTime($0) } ?? "Без срока")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Button(action: openDetailedEditor) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                            .buttonStyle(MemoryWidgetActionStyle(iconOnly: true))
+                            .help("Открыть детали").accessibilityLabel("Открыть детали")
+                    }
                 }
             }
         }
-        .padding(12)
+        .padding(MemoryWidgetMetrics.inset)
     }
 
     private var floatingClose: some View {
         Button(action: onDismiss) {
-            Image(systemName: "xmark").font(.system(size: 11, weight: .medium))
-                .frame(width: 24, height: 28)
-        }.buttonStyle(.plain).foregroundStyle(.secondary)
+            Image(systemName: "xmark")
+        }.buttonStyle(MemoryWidgetActionStyle(iconOnly: true)).foregroundStyle(.secondary)
             .help("Скрыть · Esc").accessibilityLabel("Скрыть быстрый ввод")
     }
 #endif
@@ -1104,6 +1100,10 @@ struct QuickCaptureCard: View {
     }
 
     private func openDetailedEditor() {
+        // Details can be opened before the debounced preview catches up.
+        if isFloating {
+            smartResult = ignoredSmartExpression == draft ? nil : NaturalLanguageDateParser.parse(trimmedDraft)
+        }
         let title = smartResult?.title ?? trimmedDraft
         let kind = effectiveEntryKind
         onOpenDetails(

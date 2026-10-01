@@ -12,7 +12,7 @@ struct VoiceReviewEntry: Identifiable, Equatable {
     var endDate: Date?
     var reminderOffsets: [Int]
     var persistedItemID: UUID?
-    let linkGroup: Int?
+    var linkGroup: Int?
 
     init(_ entry: VoiceCaptureEntry, defaultReminderMinutes: Int = 0) {
         id = UUID()
@@ -132,5 +132,14 @@ final class VoiceBatchReviewSession: ObservableObject, Identifiable {
     func remove(_ entryID: UUID) {
         entries.removeAll { $0.id == entryID }
         selectedEntryID = nil
+    }
+
+    var hasDraftLinks: Bool {
+        Dictionary(grouping: entries.compactMap(\.linkGroup), by: { $0 }).values.contains { $0.count > 1 }
+    }
+
+    /// Used by the widget before persistence; never changes other records or groups.
+    func unlinkDrafts() {
+        for index in entries.indices { entries[index].linkGroup = nil }
     }
 }

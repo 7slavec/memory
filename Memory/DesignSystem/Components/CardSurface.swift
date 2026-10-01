@@ -1,9 +1,10 @@
 import SwiftUI
 
 struct MemoryCardModifier: ViewModifier {
+    var cornerRadius: CGFloat = MemoryTheme.cardRadius
     func body(content: Content) -> some View {
         content
-            .background(MemoryTheme.card, in: RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
+            .background(MemoryTheme.card, in: RoundedRectangle(cornerRadius: cornerRadius))
     }
 }
 
@@ -15,7 +16,7 @@ struct MemoryEntryCardModifier: ViewModifier {
 }
 
 extension View {
-    func memoryCard() -> some View { modifier(MemoryCardModifier()) }
+    func memoryCard(cornerRadius: CGFloat = MemoryTheme.cardRadius) -> some View { modifier(MemoryCardModifier(cornerRadius: cornerRadius)) }
     func memoryEntryCard(isEvent: Bool) -> some View {
         modifier(MemoryEntryCardModifier(isEvent: isEvent))
     }

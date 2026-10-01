@@ -41,13 +41,14 @@ private final class CapturePanel: NSPanel {
 final class MacQuickCaptureController: ObservableObject {
     static let shared = MacQuickCaptureController()
     @Published private(set) var activation: CaptureActivation?
-    @Published private(set) var editorHeight: CGFloat = 540
+    @Published private(set) var editorHeight: CGFloat = MemoryWidgetMetrics.editorHeight
     private var panel: CapturePanel?
     private var container: ModelContainer?
     private var account: AccountSyncController?
     private var previousApp: NSRunningApplication?
     private var screen: NSScreen?
     private var presentationID = UUID()
+    private var targetFrame: NSRect?
 
     func configure(container: ModelContainer, account: AccountSyncController) {
         guard self.container == nil, !DesignCatalogMode.isEnabled,
@@ -74,6 +75,7 @@ final class MacQuickCaptureController: ObservableObject {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        activation = CaptureActivation(mode: action == .voice ? .voice : .text)
         if panel == nil {
             let window = CapturePanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 60),
                                       styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -88,9 +90,13 @@ final class MacQuickCaptureController: ObservableObject {
             window.onEscape = { [weak self] in self?.hide() }
             let context = ModelContext(container)
             context.autosaveEnabled = false
-            window.contentView = NSHostingView(rootView:
+            let host = NSHostingView(rootView:
                 MacQuickCaptureView(controller: self)
                     .environmentObject(account).modelContext(context))
+            // We own the panel size. Intrinsic hosting-size feedback must not
+            // compete with the animation below on every intermediate frame.
+            host.sizingOptions = []
+            window.contentView = host
             panel = window
         }
         guard let panel else { return }
@@ -98,7 +104,9 @@ final class MacQuickCaptureController: ObservableObject {
         if !panel.isVisible {
             previousApp = NSWorkspace.shared.frontmostApplication
             screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main
-            editorHeight = min(540, max(160, (screen?.visibleFrame.height ?? 800) - 150))
+            editorHeight = min(MemoryWidgetMetrics.editorHeight, max(160, (screen?.visibleFrame.height ?? 800) - 150))
+            targetFrame = nil
+            panel.contentView?.layoutSubtreeIfNeeded()
             resize(size: panel.frame.size)
             panel.alphaValue = 0
             panel.makeKeyAndOrderFront(nil)
@@ -112,13 +120,6 @@ final class MacQuickCaptureController: ObservableObject {
                 context.duration = MemoryMotion.panelDuration
                 panel.animator().alphaValue = 1
             }
-        }
-        // Focus/voice command follows hosting-view attachment, not an arbitrary sleep.
-        let id = presentationID
-        Task { @MainActor in
-            await Task.yield()
-            guard self.presentationID == id, panel.isVisible else { return }
-            self.activation = CaptureActivation(mode: action == .voice ? .voice : .text)
         }
     }
 
@@ -145,11 +146,11 @@ final class MacQuickCaptureController: ObservableObject {
     func resize(size requestedSize: CGSize) {
         guard let panel, let screen = screen ?? NSScreen.main else { return }
         let area = screen.visibleFrame
-        let size = NSSize(width: min(requestedSize.width, area.width - 24), height: min(max(52, requestedSize.height), area.height - 40))
+        let size = NSSize(width: min(ceil(requestedSize.width), area.width - 24), height: min(max(52, ceil(requestedSize.height)), area.height - 40))
         let position = MacCapturePosition(rawValue: UserDefaults.standard.string(forKey: "mac.capture.position") ?? "") ?? .topRight
         let frame = NSRect(origin: position.origin(size: size, in: area), size: size)
-        guard abs(panel.frame.width - frame.width) > 0.5 || abs(panel.frame.height - frame.height) > 0.5
-                || panel.frame.origin != frame.origin else { return }
+        guard targetFrame != frame else { return }
+        targetFrame = frame
         if panel.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = MemoryMotion.pageDuration
@@ -163,6 +164,7 @@ final class MacQuickCaptureController: ObservableObject {
         panel?.orderOut(nil)
         panel?.contentView = nil
         panel = nil
+        targetFrame = nil
         presentationID = UUID()
     }
 }

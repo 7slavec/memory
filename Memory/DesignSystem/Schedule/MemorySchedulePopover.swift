@@ -6,9 +6,10 @@ struct MemorySchedulePopover: ViewModifier {
     @Binding var selection: Date
     let minimumDate: Date?
     var availableWidth: CGFloat = 390
+    var enabled = true
 
     private var presented: Binding<Bool> {
-        Binding(get: { active != nil }, set: { if !$0 { active = nil } })
+        Binding(get: { enabled && active != nil }, set: { if enabled && !$0 { active = nil } })
     }
 
     func body(content: Content) -> some View {

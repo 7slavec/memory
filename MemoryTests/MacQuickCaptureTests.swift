@@ -2,11 +2,38 @@
 import AppKit
 import Carbon
 import Testing
+import SwiftData
 @testable import Memory
 
 @MainActor
 @Suite(.serialized)
 struct MacQuickCaptureTests {
+    @Test func widgetGroupWaitsForConfirmationAndUnlinkKeepsDrafts() throws {
+        let container = try ModelContainer(for: Item.self, RecordLink.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        let source = VoiceReviewTesting.session()
+        var entries = source.entries
+        for i in entries.indices { entries[i].persistedItemID = nil }
+        let session = VoiceBatchReviewSession(batch: VoiceBatchReview(referenceDate: .now, entries: entries))
+        #expect(session.hasDraftLinks)
+        #expect(try context.fetchCount(FetchDescriptor<Item>()) == 0)
+        let ids = session.entries.map(\.id)
+        session.unlinkDrafts()
+        #expect(!session.hasDraftLinks)
+        #expect(session.entries.map(\.id) == ids)
+        #expect(session.canSave)
+        let saved = try VoiceBatchPersistence.create(session.entries, ownerID: nil, context: context)
+        #expect(saved.count == 2)
+        #expect(try context.fetchCount(FetchDescriptor<RecordLink>()) == 0)
+    }
+
+    @Test func transcriptGrowthIsBoundedAndStableWithinOneLine() {
+        #expect(MemoryWidgetMetrics.transcriptHeight(0) == 20)
+        #expect(MemoryWidgetMetrics.transcriptHeight(38.3) == 39)
+        #expect(MemoryWidgetMetrics.transcriptHeight(140) == 140)
+        #expect(MemoryWidgetMetrics.transcriptHeight(1200) == MemoryWidgetMetrics.transcriptLimit)
+    }
     @Test func receiptOnlyAutoHidesWhenSafe() {
         let ready = MacCaptureAutoHidePolicy(count: 1, interacting: false, hasError: false, isVisible: true, usesVoiceOver: false)
         #expect(ready.shouldHide)

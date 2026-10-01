@@ -16,6 +16,18 @@ import UIKit
 
 #if os(macOS)
 final class MemoryAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+#if DEBUG
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard VoiceReviewTesting.isQuickCaptureEnabled else { return }
+        // The fixture owns an in-memory container and does not depend on macOS
+        // restoring a main window before the floating panel can be tested.
+        do {
+            let container = try ModelContainer(for: Item.self, RecordLink.self,
+                configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+            MacQuickCaptureController.shared.configure(container: container, account: AccountSyncController())
+        } catch { assertionFailure("Unable to create isolated widget fixture: \(error)") }
+    }
+#endif
     func applicationWillFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
 

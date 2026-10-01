@@ -1,5 +1,7 @@
 import SwiftUI
 
+enum ItemEditorPresentation { case standard, captureWidget }
+
 #if os(iOS)
 private enum MobileEditorField: Hashable {
     case title
@@ -24,6 +26,9 @@ struct ItemEditorView: View {
     let onDismiss: () -> Void
     let isNew: Bool
     let saveActionTitle: String?
+    let presentation: ItemEditorPresentation
+    let widgetMaximumHeight: CGFloat
+    private var isWidget: Bool { presentation == .captureWidget }
     @State private var title: String
     @State private var details: String
     @State private var isDescriptionPresented: Bool
@@ -43,6 +48,7 @@ struct ItemEditorView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pendingLinkedRecord: Item?
     @State private var isSaveErrorPresented = false
+    @State private var widgetContentHeight: CGFloat = 220
 #if os(iOS)
     @State private var isMobileEditorAtTop = true
     @State private var dismissDragEligible: Bool?
@@ -58,6 +64,8 @@ struct ItemEditorView: View {
         isCompactDesktopPane: Bool = false,
         isNew: Bool = false,
         saveActionTitle: String? = nil,
+        presentation: ItemEditorPresentation = .standard,
+        widgetMaximumHeight: CGFloat = MemoryWidgetMetrics.editorHeight,
         linkedCount: Int = 0,
         linksItem: Item? = nil,
         onOpenLinkedRecord: ((Item) -> Void)? = nil,
@@ -71,6 +79,8 @@ struct ItemEditorView: View {
         self.isCompactDesktopPane = isCompactDesktopPane
         self.isNew = isNew
         self.saveActionTitle = saveActionTitle
+        self.presentation = presentation
+        self.widgetMaximumHeight = widgetMaximumHeight
         self.onDismiss = onDismiss
         self.linkedCount = linkedCount
         self.linksItem = linksItem
@@ -90,7 +100,7 @@ struct ItemEditorView: View {
     var body: some View {
         Group {
 #if os(macOS)
-            macEditor
+            if isWidget { widgetEditor } else { macEditor }
 #else
             mobileEditor
 #endif
@@ -98,7 +108,14 @@ struct ItemEditorView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _, width in
             if width > 0 { editorWidth = width }
         }
-        .alert("Не удалось сохранить", isPresented: $isSaveErrorPresented) {
+        .onChange(of: scheduledDate) { old, new in
+            guard entryKind == .event, hasEventEnd, eventEndDate <= new else { return }
+            eventEndDate = new.addingTimeInterval(max(60, eventEndDate.timeIntervalSince(old)))
+        }
+        .onChange(of: activeSchedulePicker) { _, target in
+            if target == nil { isEndDateExpanded = false }
+        }
+        .alert("Не удалось сохранить", isPresented: Binding(get: { !isWidget && isSaveErrorPresented }, set: { isSaveErrorPresented = $0 })) {
             Button("ОК", role: .cancel) {}
         } message: {
             Text("Изменения остались в редакторе. Попробуйте ещё раз.")
@@ -352,6 +369,44 @@ struct ItemEditorView: View {
 #endif
 
 #if os(macOS)
+    private var widgetEditor: some View {
+        VStack(spacing: 0) {
+            macHeader
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let target = activeSchedulePicker {
+                        widgetSchedulePicker(target)
+                    } else {
+                        macPrimaryContent
+                        macKindPicker
+                        macScheduleCard
+                        macNotificationCard
+                    }
+                    if isSaveErrorPresented {
+                        Text("Не удалось применить изменения. Проверьте название и даты.")
+                            .font(.system(size: 12)).foregroundStyle(MemoryTheme.danger)
+                    }
+                }
+                .padding(.horizontal, MemoryWidgetMetrics.inset).padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { ceil($0.size.height) } action: { widgetContentHeight = $0 }
+                .modifier(MemoryWidgetRouteReveal(route: activeSchedulePicker.map { String(describing: $0) } ?? "editor"))
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(max(80, widgetMaximumHeight - 104), max(60, widgetContentHeight)))
+            Button {
+                if activeSchedulePicker != nil { activeSchedulePicker = nil }
+                else { saveAndDismiss() }
+            } label: {
+                Text(activeSchedulePicker != nil ? "Готово" : saveActionTitle ?? "Сохранить").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(MemoryWidgetActionStyle(prominent: true))
+            .keyboardShortcut("s", modifiers: .command).disabled(activeSchedulePicker == nil && !canSave)
+            .padding(MemoryWidgetMetrics.inset)
+        }
+        .background(MemoryTheme.background)
+    }
+
     private var macEditor: some View {
         VStack(spacing: 0) {
             macHeader
@@ -407,26 +462,26 @@ struct ItemEditorView: View {
     private var macHeader: some View {
         HStack {
             Button(action: cancelEditing) {
-                Image(systemName: "arrow.left").font(.system(size: 17))
-                    .frame(width: 44, height: 44)
+                Image(systemName: "arrow.left").font(.system(size: isWidget ? 13 : 17))
+                    .frame(width: isWidget ? 32 : 44, height: isWidget ? 32 : 44)
                     .background(MemoryTheme.card, in: Circle())
             }
             .buttonStyle(.plain).accessibilityLabel("Назад")
             Spacer()
             Text(isNew ? "Новая запись" : entryKind.title).font(.system(size: 14)).foregroundStyle(.secondary)
             Spacer()
-            Color.clear.frame(width: 44, height: 44)
+            Color.clear.frame(width: isWidget ? 32 : 44, height: isWidget ? 32 : 44)
         }
-        .padding(.horizontal, 24).padding(.vertical, 12)
+        .padding(.horizontal, isWidget ? 12 : 24).padding(.vertical, isWidget ? 8 : 12)
     }
 
     private var macPrimaryContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: isWidget ? 8 : 16) {
             TextField("Что нужно запомнить?", text: $title, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(
                     .system(
-                        size: isCompactDesktopPane ? 28 : 34,
+                        size: isWidget ? 20 : isCompactDesktopPane ? 28 : 34,
                         weight: .medium,
                         design: .rounded
                     )
@@ -445,14 +500,14 @@ struct ItemEditorView: View {
 
                     TextField("Контекст, детали или ссылка", text: $details, axis: .vertical)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 16, design: .rounded))
+                        .font(.system(size: isWidget ? 13 : 16, design: .rounded))
                         .lineSpacing(2)
-                        .lineLimit(2...8)
+                        .lineLimit((isWidget ? 1 : 2)...8)
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(isWidget ? .opacity : .opacity.combined(with: .move(edge: .top)))
             } else {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(isWidget || reduceMotion ? nil : .easeInOut(duration: 0.18)) {
                         isDescriptionPresented = true
                     }
                 } label: {
@@ -467,7 +522,7 @@ struct ItemEditorView: View {
         }
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
-        .animation(.easeInOut(duration: 0.18), value: isDescriptionPresented)
+        .animation(isWidget || reduceMotion ? nil : .easeInOut(duration: 0.18), value: isDescriptionPresented)
     }
 
     private var macKindPicker: some View {
@@ -477,6 +532,22 @@ struct ItemEditorView: View {
     private var macScheduleCard: some View { scheduleCard }
 
     private var macNotificationCard: some View { notificationCard }
+
+    private func widgetSchedulePicker(_ target: SchedulePickerTarget) -> some View {
+        let presented = Binding(get: { activeSchedulePicker != nil }, set: { if !$0 { activeSchedulePicker = nil } })
+        return VStack(spacing: 4) {
+            HStack {
+                Text(target.editsEnd ? "Окончание" : "Начало").font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+            }
+            if target.editsDate {
+                MemoryCalendarPicker(selection: scheduleBinding(target), isPresented: presented,
+                    minimumDate: target.editsEnd ? scheduledDate : nil, width: min(320, editorWidth - 24))
+            } else {
+                MemoryTimePicker(selection: scheduleBinding(target), isPresented: presented)
+            }
+        }.id(target).accessibilityIdentifier("widgetSchedulePicker")
+    }
 
     private var macFooter: some View {
         HStack(spacing: 10) {
@@ -519,23 +590,16 @@ struct ItemEditorView: View {
                 Text("Окончание должно быть позже начала").font(.caption).foregroundStyle(MemoryTheme.danger)
             }
         }
-        .padding(.horizontal, 18).padding(.vertical, 10)
-        .memoryCard()
+        .padding(.horizontal, isWidget ? 12 : 18).padding(.vertical, isWidget ? 8 : 10)
+        .memoryCard(cornerRadius: isWidget ? 14 : MemoryTheme.cardRadius)
 #if os(macOS)
         .modifier(MemorySchedulePopover(active: $activeSchedulePicker,
                                         selection: scheduleBinding(activeSchedulePicker ?? .startDate),
                                         minimumDate: activeSchedulePicker?.editsEnd == true ? scheduledDate : nil,
-                                        availableWidth: editorWidth))
+                                        availableWidth: editorWidth, enabled: !isWidget))
 #endif
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hasSchedule)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hasEventEnd)
-        .onChange(of: scheduledDate) { old, new in
-            guard entryKind == .event, hasEventEnd, eventEndDate <= new else { return }
-            eventEndDate = new.addingTimeInterval(max(60, eventEndDate.timeIntervalSince(old)))
-        }
-        .onChange(of: activeSchedulePicker) { _, target in
-            if target == nil { isEndDateExpanded = false }
-        }
+        .animation(reduceMotion || isWidget ? nil : .easeOut(duration: 0.18), value: hasSchedule)
+        .animation(reduceMotion || isWidget ? nil : .easeOut(duration: 0.18), value: hasEventEnd)
     }
 
     private var scheduleEnabledBinding: Binding<Bool> {
@@ -569,8 +633,8 @@ struct ItemEditorView: View {
             activeSchedulePicker = target
         } label: {
             Text(target.editsDate ? MemoryDateFormatting.editorDate(date) : MemoryDateFormatting.time(date))
-                .font(.system(size: 20, weight: .regular))
-                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75).frame(minHeight: 44)
+                .font(.system(size: isWidget ? 17 : 20, weight: .regular))
+                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75).frame(minHeight: isWidget ? 32 : 44)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(target.editsEnd ? "Окончание" : "Начало"), \(target.editsDate ? "дата" : "время")")
@@ -619,7 +683,7 @@ struct ItemEditorView: View {
         Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
             .frame(width: 28, height: 28)
             .background(MemoryTheme.raised, in: Circle())
-            .frame(width: 44, height: 44).contentShape(Rectangle())
+            .frame(width: isWidget ? 32 : 44, height: isWidget ? 32 : 44).contentShape(Rectangle())
     }
 
     private func scheduleBinding(_ target: SchedulePickerTarget) -> Binding<Date> {
@@ -634,30 +698,38 @@ struct ItemEditorView: View {
             settingToggle("Напомнить", isOn: notificationsEnabledBinding, identifier: "notificationsEnabled")
             if notificationsEnabled { reminderSelectionList }
         }
-        .padding(.horizontal, 18).padding(.vertical, 10).memoryCard()
+        .padding(.horizontal, isWidget ? 12 : 18).padding(.vertical, isWidget ? 8 : 10)
+        .memoryCard(cornerRadius: isWidget ? 14 : MemoryTheme.cardRadius)
         .disabled(!hasSchedule || !applicationNotificationsEnabled)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: notificationsEnabled)
+        .animation(reduceMotion || isWidget ? nil : .easeInOut(duration: 0.2), value: notificationsEnabled)
     }
 
     private func settingToggle(_ label: String, isOn: Binding<Bool>, identifier: String, enabled: Bool = true) -> some View {
         HStack {
-            Text(label).font(.system(size: 15, weight: .medium))
+            Text(label).font(.system(size: isWidget ? 13 : 15, weight: .medium))
             Spacer(minLength: 12)
             Toggle(label, isOn: isOn).labelsHidden()
                 .toggleStyle(.switch).tint(MemoryTheme.switchTint)
+                .controlSize(isWidget ? .small : .regular)
                 .disabled(!enabled).accessibilityIdentifier(identifier)
         }
-        .frame(minHeight: 44)
+        .frame(minHeight: isWidget ? 32 : 44)
     }
 
-    private var entryKindToggle: some View {
-        MemoryEntryKindChip(kind: entryKind) {
+    @ViewBuilder private var entryKindToggle: some View {
+        if isWidget {
+            Button(entryKind.title, action: toggleEntryKind)
+                .buttonStyle(MemoryWidgetActionStyle())
+                .accessibilityLabel("Тип записи: \(entryKind.title)")
+        } else { MemoryEntryKindChip(kind: entryKind, action: toggleEntryKind) }
+    }
+
+    private func toggleEntryKind() {
             let nextKind: EntryKind = entryKind == .reminder ? .event : .reminder
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(isWidget || reduceMotion ? nil : .easeInOut(duration: 0.2)) {
                 entryKind = nextKind
                 normalizeSchedule(for: nextKind)
             }
-        }
     }
 
     private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -736,7 +808,7 @@ struct ItemEditorView: View {
                     }
                 }
                 .padding(.horizontal, 11)
-                .frame(minHeight: 44)
+                .frame(minHeight: isWidget ? 32 : 44)
                 .background {
                     Color.primary.opacity(0.05)
                 }
@@ -759,7 +831,7 @@ struct ItemEditorView: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(minHeight: 44)
+                        .frame(minHeight: isWidget ? 32 : 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Добавляет ещё одно время уведомления")
@@ -817,7 +889,7 @@ struct ItemEditorView: View {
     private var entryChips: some View {
         HStack(spacing: 8) {
             entryKindToggle
-            if onOpenLinkedRecord != nil, !isNew || linksItem != nil {
+            if !isWidget, onOpenLinkedRecord != nil, !isNew || linksItem != nil {
                 Button { showsLinks = true } label: {
                     MemoryLinkBadge(count: linkedCount)
                         .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -853,7 +925,12 @@ struct ItemEditorView: View {
     }
 
     private func cancelEditing() {
-        if isNew && hasUnsavedChanges {
+        if isWidget {
+            if activeSchedulePicker != nil { activeSchedulePicker = nil; return }
+            if isNew { closeEditor(); return }
+            guard !hasUnsavedChanges || (canSave && persistChanges()) else { isSaveErrorPresented = true; return }
+            closeEditor()
+        } else if isNew && hasUnsavedChanges {
             isDiscardConfirmationPresented = true
         } else if hasUnsavedChanges {
             guard canSave, persistChanges() else { isSaveErrorPresented = true; return }

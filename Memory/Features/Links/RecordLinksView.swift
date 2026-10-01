@@ -144,11 +144,7 @@ struct RecordLinksView: View {
     private var linkActions: some View {
         HStack(spacing: 8) {
                 Button(role: .destructive, action: dissolve) {
-                    Image(systemName: "link")
-                        .overlay {
-                            UnlinkSlash().stroke(MemoryTheme.raised, lineWidth: 5)
-                            UnlinkSlash().stroke(MemoryTheme.danger, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                        }
+                    MemoryUnlinkSymbol()
                         .font(.system(size: 17, weight: .medium))
                         .frame(width: 44, height: 44)
                         .background(MemoryTheme.raised, in: Circle())
@@ -190,14 +186,5 @@ struct RecordLinksView: View {
             account.markLocalChange(modelContext: modelContext)
             dismiss()
         } catch { errorMessage = error.localizedDescription }
-    }
-}
-
-private struct UnlinkSlash: Shape {
-    func path(in rect: CGRect) -> Path {
-        Path {
-            $0.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            $0.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        }
     }
 }

@@ -17,19 +17,22 @@ final class MemoryUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-quick-capture"]
         app.launch()
-        ensureWindow(app)
         let panel = app.dialogs["Быстрый ввод Norka"]
         let field = panel.textFields["quickCaptureField"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        XCTAssertTrue(field.waitForExistence(timeout: 15))
         XCTAssertLessThan(panel.frame.height, 110)
         XCTAssertLessThan(panel.frame.width, 400)
         XCTAssertFalse(panel.staticTexts["norka."].exists)
         XCTAssertFalse(panel.buttons["Добавить напоминание"].exists)
+        XCTAssertFalse(panel.buttons["Голосовой ввод"].exists)
         field.click(); field.typeText("Проверка виджета\n")
-        let edit = panel.buttons["Изменить"]
+        let edit = panel.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Проверка виджета,")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         edit.click()
         XCTAssertTrue(panel.buttons["Назад"].waitForExistence(timeout: 5))
+        XCTAssertLessThan(panel.frame.height, 480)
+        XCTAssertLessThanOrEqual(panel.frame.width, 360)
+        XCTAssertFalse(panel.buttons["openRecordLinks"].exists)
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "Quick capture inline editor"; shot.lifetime = .keepAlways; add(shot)
         panel.buttons["Назад"].click()
@@ -42,18 +45,31 @@ final class MemoryUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-quick-capture", "--uitest-capture-batch"]
         app.launch()
-        ensureWindow(app)
         let panel = app.dialogs["Быстрый ввод Norka"]
-        XCTAssertTrue(panel.staticTexts["Сохранено: 2"].waitForExistence(timeout: 10))
+        XCTAssertTrue(panel.staticTexts["2 записи"].waitForExistence(timeout: 15))
+        XCTAssertTrue(panel.buttons["Сохранить"].exists)
+        XCTAssertFalse(panel.buttons["Новая"].exists)
         let first = panel.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Собрание,")).firstMatch
         XCTAssertTrue(first.exists)
         first.click()
         XCTAssertTrue(panel.buttons["Назад"].waitForExistence(timeout: 5))
+        panel.buttons["Начало, дата"].click()
+        XCTAssertTrue(panel.buttons["Следующий месяц"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.popovers.firstMatch.exists)
         panel.buttons["Назад"].click()
-        XCTAssertTrue(panel.staticTexts["Сохранено: 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(panel.buttons["Начало, время"].waitForExistence(timeout: 5))
+        panel.buttons["Начало, время"].click()
+        XCTAssertTrue(panel.textFields["Часы"].waitForExistence(timeout: 5))
+        panel.buttons["Готово"].click()
+        XCTAssertTrue(panel.buttons["Начало, дата"].waitForExistence(timeout: 5))
+        panel.buttons["Назад"].click()
+        XCTAssertTrue(panel.staticTexts["2 записи"].waitForExistence(timeout: 5))
+        panel.buttons["Не связывать записи"].click()
+        XCTAssertFalse(panel.buttons["Не связывать записи"].exists)
+        XCTAssertTrue(panel.buttons["Сохранить"].isEnabled)
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = "Quick capture saved batch"; shot.lifetime = .keepAlways; add(shot)
-        panel.buttons["Отменить создание этих записей"].click()
+        shot.name = "Quick capture confirm batch"; shot.lifetime = .keepAlways; add(shot)
+        panel.buttons["Сохранить"].click()
         XCTAssertTrue(panel.waitForNonExistence(timeout: 5))
     }
 #endif

@@ -20,6 +20,7 @@ struct MacQuickCaptureView: View {
     @State private var review: VoiceBatchReviewSession?
     @State private var detail: Item?
     @State private var isNewDetail = false
+    @State private var draftEntryID: UUID?
     @State private var results: [Item] = []
     @State private var isVoice = false
     @State private var hovered = false
@@ -27,8 +28,13 @@ struct MacQuickCaptureView: View {
     @State private var commitSignal = 0
     @State private var error: String?
     @State private var reminderQueue = MacCaptureReminderQueue()
+    init(controller: MacQuickCaptureController) {
+        self.controller = controller
+        _isVoice = State(initialValue: controller.activation?.mode == .voice)
+    }
     private var occupied: Bool { review != nil || detail != nil || !results.isEmpty }
-    private var width: CGFloat { detail != nil || review != nil ? 440 : !results.isEmpty ? 360 : isVoice ? 264 : 360 }
+    private var width: CGFloat { occupied ? MemoryWidgetMetrics.width : isVoice ? MemoryWidgetMetrics.voiceWidth : MemoryWidgetMetrics.width }
+    private var route: String { detail != nil ? "editor" : review != nil ? "review" : !results.isEmpty ? "receipt" : isVoice ? "voice" : "text" }
     private var autoHide: MacCaptureAutoHidePolicy {
         .init(count: results.count, interacting: hovered || keyboardInteraction || detail != nil || review != nil,
               hasError: error != nil, isVisible: controller.activation?.mode != .suspend, usesVoiceOver: voiceOver)
@@ -41,12 +47,13 @@ struct MacQuickCaptureView: View {
                     .opacity(occupied ? 0 : 1).frame(height: occupied ? 0 : nil).clipped()
                     .allowsHitTesting(!occupied).accessibilityHidden(occupied)
                 if let detail {
-                    editor(detail).frame(height: controller.editorHeight)
+                    editor(detail)
                 } else if let review {
-                    draftReview(review).frame(height: controller.editorHeight)
+                    MacWidgetReview(session: review, onEdit: openDraft, onSave: { _ = saveBatch(review) },
+                                    onDiscard: discardReview, maximumHeight: controller.editorHeight)
                 } else if !results.isEmpty {
                     MacCaptureResultsView(items: results, onEdit: openResult,
-                        onUndo: undoCreation, onNew: startNew, onClose: controller.hide)
+                        onUndo: undoCreation, onClose: controller.hide)
                         .frame(maxHeight: controller.editorHeight)
                 }
             }
@@ -56,10 +63,11 @@ struct MacQuickCaptureView: View {
             }
         }
         .frame(width: width).fixedSize(horizontal: false, vertical: true)
+        .modifier(MemoryWidgetRouteReveal(route: route))
         .foregroundStyle(MemoryTheme.accent)
-        .background(MemoryTheme.background, in: RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
-        .overlay { RoundedRectangle(cornerRadius: MemoryTheme.cardRadius).strokeBorder(.primary.opacity(0.1), lineWidth: 1).allowsHitTesting(false) }
-        .compositingGroup().clipShape(RoundedRectangle(cornerRadius: MemoryTheme.cardRadius))
+        .background(occupied || isVoice ? MemoryTheme.background : MemoryTheme.card, in: RoundedRectangle(cornerRadius: MemoryWidgetMetrics.radius))
+        .overlay { RoundedRectangle(cornerRadius: MemoryWidgetMetrics.radius).strokeBorder(.primary.opacity(0.1), lineWidth: 1).allowsHitTesting(false) }
+        .compositingGroup().clipShape(RoundedRectangle(cornerRadius: MemoryWidgetMetrics.radius))
         .preferredColorScheme(appearance.colorScheme)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { controller.resize(size: $0) }
         .onExitCommand(perform: controller.hide)
@@ -90,12 +98,14 @@ struct MacQuickCaptureView: View {
     private var composer: some View {
         QuickCaptureCard(defaultPreset: .none, presentation: .floating,
             activation: occupied ? nil : controller.activation,
-            onFloatingModeChange: { isVoice = $0 }, detailCommitSignal: commitSignal,
+            onFloatingModeChange: { isVoice = $0 }, floatingContentVisible: !occupied,
+            detailCommitSignal: commitSignal,
             remoteVoiceInterpreter: { text, now, calendar in
                 try await account.interpretVoiceRemotely(text, now: now, calendar: calendar)
             }, onDismiss: controller.hide,
             onOpenDetails: { title, details, kind, date, end in
                 isNewDetail = true
+                draftEntryID = nil
                 detail = Item(title: title, details: details, dueDate: date, entryKind: kind, endDate: end,
                               reminderOffsets: date == nil ? [] : [account.defaultReminderMinutes(for: kind)])
             }, onReviewBatch: receiveBatch, onAdd: save)
@@ -103,6 +113,12 @@ struct MacQuickCaptureView: View {
 
     private func editor(_ item: Item) -> some View {
         ItemEditorView(item: item, onSave: { title, details, kind, date, end, offsets in
+            if let entryID = draftEntryID, let review {
+                review.update(entryID, title: title, details: details, kind: kind, date: date,
+                              endDate: end, reminderOffsets: offsets)
+                detail = nil; draftEntryID = nil
+                return true
+            }
             let succeeded = isNewDetail
                 ? save(title, details, kind, date, end, offsets) != nil
                 : update(item, title, details, kind, date, end, offsets)
@@ -112,33 +128,38 @@ struct MacQuickCaptureView: View {
             return true
         }, onToggleCompleted: { toggle(item) }, onDelete: { remove(item) },
             isEmbedded: true, isCompactDesktopPane: true, isNew: isNewDetail,
-            onDismiss: { detail = nil })
+            saveActionTitle: draftEntryID != nil ? "Готово" : "Сохранить", presentation: .captureWidget,
+            widgetMaximumHeight: controller.editorHeight,
+            onDismiss: { detail = nil; draftEntryID = nil })
             .id(item.id)
     }
 
-    private func draftReview(_ session: VoiceBatchReviewSession) -> some View {
-        VoiceBatchReviewView(session: session, onCancel: { review = nil },
-            onSave: { saveBatch(session) }, onSaveExisting: update,
-            onToggleExisting: toggle, onDeleteExisting: remove, header: { EmptyView() })
+    private func openDraft(_ entry: VoiceReviewEntry) {
+        guard let review else { return }
+        draftEntryID = entry.id
+        isNewDetail = false
+        detail = review.item(for: entry)
     }
 
     private func openResult(_ item: Item) {
         keyboardInteraction = true
         isNewDetail = false
+        draftEntryID = nil
         detail = item
     }
 
-    private func startNew() {
-        results = []; review = nil; error = nil; keyboardInteraction = false
-        controller.show(.text)
+    private func discardReview() {
+        review = nil; detail = nil; draftEntryID = nil; error = nil
+        commitSignal += 1
+        controller.hide()
     }
 
     private func receiveBatch(_ batch: VoiceBatchReview) {
         guard review?.id != batch.id else { return }
         let session = VoiceBatchReviewSession(batch: batch)
         review = session
-        // Match the main screen: complete results save once; ambiguous ones stay editable drafts.
-        if session.canSave { _ = saveBatch(session) }
+        // Widget-specific explicit confirmation. No records, links or alerts
+        // exist until the user accepts the entire group.
     }
 
     private func save(_ title: String, _ details: String?, _ kind: EntryKind,
@@ -165,8 +186,9 @@ struct MacQuickCaptureView: View {
                     title: entry.originalDraft.title, details: entry.originalDraft.details,
                     dueDate: entry.originalDraft.dueDate, referenceDate: session.batch.referenceDate)
             }
-            review = nil; results = items; keyboardInteraction = false
             changed(items)
+            review = nil; results = []; keyboardInteraction = false; commitSignal += 1
+            controller.hide()
             return true
         } catch { self.error = "Не удалось сохранить: \(error.localizedDescription)"; return false }
     }
@@ -231,7 +253,6 @@ private struct MacCaptureResultsView: View {
     let items: [Item]
     let onEdit: (Item) -> Void
     let onUndo: () -> Void
-    let onNew: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -240,8 +261,6 @@ private struct MacCaptureResultsView: View {
                 Label(items.count == 1 ? "Сохранено" : "Сохранено: \(items.count)", systemImage: "checkmark")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                 Spacer()
-                Button(action: onClose) { Image(systemName: "xmark").frame(width: 28, height: 28) }
-                    .buttonStyle(.plain).accessibilityLabel("Скрыть результат")
             }
             ScrollView {
                 VStack(spacing: 8) {
@@ -253,17 +272,11 @@ private struct MacCaptureResultsView: View {
             }.scrollBounceBehavior(.basedOnSize)
                 .frame(height: min(300, max(60, contentHeight)))
             HStack(spacing: 8) {
-                if items.count == 1, let item = items.first {
-                    Button { onEdit(item) } label: { Label("Изменить", systemImage: "pencil") }
-                        .buttonStyle(MemoryActionStyle(compact: true))
-                } else {
-                    Button(action: onNew) { Label("Новая", systemImage: "plus") }
-                        .buttonStyle(MemoryActionStyle(compact: true))
-                }
-                Spacer()
-                Button(action: onUndo) { Image(systemName: "arrow.uturn.backward").frame(width: 32, height: 32) }
-                    .buttonStyle(.plain).help("Отменить создание")
+                Button(action: onUndo) { Image(systemName: "trash") }
+                    .buttonStyle(MemoryWidgetActionStyle(iconOnly: true, destructive: true)).help("Отменить создание")
                     .accessibilityLabel(items.count == 1 ? "Отменить создание записи" : "Отменить создание этих записей")
+                Button(action: onClose) { Text("Готово").frame(maxWidth: .infinity) }
+                    .buttonStyle(MemoryWidgetActionStyle(prominent: true))
             }
         }.padding(12)
     }
