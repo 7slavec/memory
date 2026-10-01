@@ -370,7 +370,11 @@ struct ItemEditorView: View {
 
 #if os(macOS)
     private var widgetEditor: some View {
-        VStack(spacing: 0) {
+        // The editor stays compact, but a whole month needs more room than
+        // its 480 pt cap. Pickers grow to content, bounded only by the screen.
+        let heightLimit = activeSchedulePicker == nil
+            ? min(MemoryWidgetMetrics.editorHeight, widgetMaximumHeight) : widgetMaximumHeight
+        return VStack(spacing: 0) {
             macHeader
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
@@ -393,7 +397,7 @@ struct ItemEditorView: View {
                 .modifier(MemoryWidgetRouteReveal(route: activeSchedulePicker.map { String(describing: $0) } ?? "editor"))
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(height: min(max(80, widgetMaximumHeight - 104), max(60, widgetContentHeight)))
+            .frame(height: min(max(80, heightLimit - 104), max(60, widgetContentHeight)))
             Button {
                 if activeSchedulePicker != nil { activeSchedulePicker = nil }
                 else { saveAndDismiss() }

@@ -13,6 +13,47 @@ import AppKit
 final class MemoryUITests: XCTestCase {
 
 #if os(macOS)
+    @MainActor func testQuickWidgetCalendarFitsWholeMonth() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-quick-capture", "--uitest-capture-batch"]
+        app.launch()
+        let panel = app.dialogs["Быстрый ввод Norka"]
+        let record = panel.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Собрание,")).firstMatch
+        XCTAssertTrue(record.waitForExistence(timeout: 15))
+        record.click()
+        XCTAssertTrue(panel.buttons["Начало, дата"].waitForExistence(timeout: 5))
+        panel.buttons["Начало, дата"].click()
+        XCTAssertTrue(panel.buttons["Следующий месяц"].waitForExistence(timeout: 5))
+
+        // Exercise a six-row month regardless of the day this test is run.
+        let calendar = Calendar(identifier: .gregorian)
+        var month = calendar.dateInterval(of: .month, for: .now)!.start
+        for _ in 0..<12 {
+            let leading = (calendar.component(.weekday, from: month) + 5) % 7
+            if leading + calendar.range(of: .day, in: .month, for: month)!.count > 35 { break }
+            panel.buttons["Следующий месяц"].click()
+            month = calendar.date(byAdding: .month, value: 1, to: month)!
+        }
+        let lastDay = calendar.range(of: .day, in: .month, for: month)!.count
+        let last = panel.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "\(lastDay) ")).firstMatch
+        let done = panel.buttons["Готово"]
+        XCTAssertTrue(last.isHittable)
+        XCTAssertLessThanOrEqual(last.frame.maxY, done.frame.minY)
+        XCTAssertGreaterThan(panel.frame.height, 480)
+        XCTAssertFalse(app.popovers.firstMatch.exists)
+        let calendarHeight = panel.frame.height
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Widget full six-row calendar"; shot.lifetime = .keepAlways; add(shot)
+        panel.buttons["Назад"].click()
+        panel.buttons["Начало, время"].click()
+        XCTAssertTrue(panel.textFields["Часы"].waitForExistence(timeout: 5))
+        XCTAssertLessThan(panel.frame.height, calendarHeight)
+        panel.buttons["Назад"].click()
+        panel.buttons["Назад"].click()
+        panel.buttons["Отменить создание группы"].click()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5))
+    }
+
     @MainActor func testQuickWidgetTextReceiptAndInlineEditor() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-quick-capture"]

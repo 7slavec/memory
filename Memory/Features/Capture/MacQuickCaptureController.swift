@@ -41,7 +41,8 @@ private final class CapturePanel: NSPanel {
 final class MacQuickCaptureController: ObservableObject {
     static let shared = MacQuickCaptureController()
     @Published private(set) var activation: CaptureActivation?
-    @Published private(set) var editorHeight: CGFloat = MemoryWidgetMetrics.editorHeight
+    @Published private(set) var availableHeight: CGFloat = MemoryWidgetMetrics.editorHeight
+    var editorHeight: CGFloat { min(MemoryWidgetMetrics.editorHeight, availableHeight) }
     private var panel: CapturePanel?
     private var container: ModelContainer?
     private var account: AccountSyncController?
@@ -104,7 +105,7 @@ final class MacQuickCaptureController: ObservableObject {
         if !panel.isVisible {
             previousApp = NSWorkspace.shared.frontmostApplication
             screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main
-            editorHeight = min(MemoryWidgetMetrics.editorHeight, max(160, (screen?.visibleFrame.height ?? 800) - 150))
+            availableHeight = max(160, (screen?.visibleFrame.height ?? 800) - 40)
             targetFrame = nil
             panel.contentView?.layoutSubtreeIfNeeded()
             resize(size: panel.frame.size)

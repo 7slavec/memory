@@ -129,7 +129,7 @@ struct MacQuickCaptureView: View {
         }, onToggleCompleted: { toggle(item) }, onDelete: { remove(item) },
             isEmbedded: true, isCompactDesktopPane: true, isNew: isNewDetail,
             saveActionTitle: draftEntryID != nil ? "Готово" : "Сохранить", presentation: .captureWidget,
-            widgetMaximumHeight: controller.editorHeight,
+            widgetMaximumHeight: controller.availableHeight,
             onDismiss: { detail = nil; draftEntryID = nil })
             .id(item.id)
     }
