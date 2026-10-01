@@ -90,9 +90,11 @@ struct MemoryItemRow: View {
             if let remaining {
                 Text(remaining.display)
                     .font(.system(size: remaining.hasDays ? MemoryDensity.recordTime - 7 : MemoryDensity.recordTime,
-                                  weight: .semibold, design: .rounded))
+                                  weight: .regular))
                     .tracking(remaining.hasDays ? -0.8 : -1.2)
                     .monospacedDigit().lineLimit(1).minimumScaleFactor(0.85)
+                    .contentTransition(.identity)
+                    .animation(nil, value: remaining.display)
                     .accessibilityLabel(remaining.accessibilityText)
                     .modifier(ActiveEventCounterPulse())
             } else {

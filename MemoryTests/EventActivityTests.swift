@@ -33,6 +33,13 @@ struct EventActivityTests {
                 == "Осталось 2 дня 4 часа 3 минуты")
     }
 
+    @Test func minuteChangeKeepsStableTwoDigitFormat() {
+        let end = start.addingTimeInterval(121)
+        #expect(EventActivity.remaining(until: end, at: start)?.display == "00:03")
+        #expect(EventActivity.remaining(until: end, at: start.addingTimeInterval(1))?.display == "00:02")
+        #expect(EventActivity.remaining(until: end, at: start.addingTimeInterval(61))?.display == "00:01")
+    }
+
     @Test func earlyFinishReplacesEndAndSurvivesRemoteApply() {
         let originalEnd = start.addingTimeInterval(7_200)
         let actualEnd = start.addingTimeInterval(1_800)

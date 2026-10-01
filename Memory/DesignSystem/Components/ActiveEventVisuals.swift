@@ -16,11 +16,12 @@ struct ActiveEventRings: View {
                 let reach = hypot(size.width + 8, size.height + 8)
                 for index in 0..<3 {
                     let progress: Double = isMoving
-                        ? (timeline.date.timeIntervalSinceReferenceDate / 1.55
+                        ? (timeline.date.timeIntervalSinceReferenceDate / 2.7
                            + Double(index) / 3).truncatingRemainder(dividingBy: 1)
                         : 0.25 + Double(index) * 0.22
-                    let radius = 5 + progress * reach
-                    let fade = pow(1 - progress, 1.2)
+                    let easedProgress = progress * progress * (3 - 2 * progress)
+                    let radius = 5 + easedProgress * reach
+                    let fade = min(progress / 0.14, 1) * pow(1 - progress, 1.1)
                     let ring = Path(ellipseIn: CGRect(x: origin.x - radius,
                                                       y: origin.y - radius,
                                                       width: radius * 2,
@@ -41,25 +42,21 @@ struct ActiveEventRings: View {
 struct ActiveEventCounterPulse: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var bright = false
-    private let livelyGreen = Color(red: 0.18, green: 0.39, blue: 0.03)
+    @State private var isVisible = false
 
     func body(content: Content) -> some View {
-        content
-            .foregroundStyle(bright && !reduceMotion ? livelyGreen : MemoryTheme.onEventCard)
-            .shadow(color: livelyGreen.opacity(bright && !reduceMotion ? 0.22 : 0), radius: 2)
-            .scaleEffect(bright && !reduceMotion ? 1.025 : 1)
-            .onAppear(perform: begin)
-            .onChange(of: scenePhase) { _, _ in begin() }
-            .onDisappear { withTransaction(Transaction(animation: nil)) { bright = false } }
-    }
-
-    private func begin() {
-        withTransaction(Transaction(animation: nil)) { bright = false }
-        guard !reduceMotion, scenePhase == .active else { return }
-        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-            bright = true
+        let isMoving = isVisible && !reduceMotion && scenePhase == .active
+        return TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isMoving)) { timeline in
+            let wave = isMoving
+                ? (1 + sin(timeline.date.timeIntervalSinceReferenceDate * .pi / 1.1)) / 2
+                : 0.5
+            content
+                .foregroundStyle(MemoryTheme.onEventCard)
+                .opacity(0.84 + 0.16 * wave)
+                .scaleEffect(0.985 + 0.03 * wave)
         }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
     }
 }
 
@@ -81,8 +78,10 @@ struct ActiveEventBadge: View {
                         .font(.system(size: compact ? 12 : 14, weight: .semibold))
                     Spacer(minLength: 4)
                     Text(remaining.display)
-                        .font(.system(size: compact ? 16 : 21, weight: .bold, design: .rounded))
+                        .font(.system(size: compact ? 16 : 21, weight: .regular))
                         .monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
+                        .contentTransition(.identity)
+                        .animation(nil, value: remaining.display)
                         .modifier(ActiveEventCounterPulse())
                 }
                 .foregroundStyle(MemoryTheme.onEventCard)
