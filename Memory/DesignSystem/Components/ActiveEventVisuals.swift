@@ -16,7 +16,7 @@ struct ActiveEventRings: View {
                 let reach = hypot(size.width + 8, size.height + 8)
                 for index in 0..<3 {
                     let progress: Double = isMoving
-                        ? (timeline.date.timeIntervalSinceReferenceDate / 2.7
+                        ? (timeline.date.timeIntervalSinceReferenceDate / 4.5
                            + Double(index) / 3).truncatingRemainder(dividingBy: 1)
                         : 0.25 + Double(index) * 0.22
                     let easedProgress = progress * progress * (3 - 2 * progress)
