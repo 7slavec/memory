@@ -467,6 +467,8 @@ struct QuickCaptureCard: View {
                 )
                     .textFieldStyle(.plain)
                     .lineLimit(1...(voiceInput.isListening ? 9 : 3))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: compactControlSize, alignment: .leading)
                     .focused($focusedField, equals: .title)
                     .allowsHitTesting(!voiceInput.isListening && !isFinalizingVoiceSubmission)
                     .accessibilityIdentifier("quickCaptureField")
@@ -480,23 +482,26 @@ struct QuickCaptureCard: View {
                     voiceButton(size: compactControlSize)
                 }
 
-                if !voiceInput.isListening && isComposerExpanded {
-                    detailsDisclosureButton(size: compactControlSize)
-                }
+                detailsDisclosureButton(size: compactControlSize)
+                    .opacity(!voiceInput.isListening && isComposerExpanded ? 1 : 0)
+                    .allowsHitTesting(!voiceInput.isListening && isComposerExpanded)
+                    .disabled(voiceInput.isListening || !isComposerExpanded)
+                    .accessibilityHidden(voiceInput.isListening || !isComposerExpanded)
 
-                if showsCancelButton {
-                    Button(action: cancelDraft) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: compactControlSize, height: compactControlSize)
-                            .background(Color.secondary.opacity(0.09))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Отменить ввод")
-                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                Button(action: cancelDraft) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: compactControlSize, height: compactControlSize)
+                        .background(Color.secondary.opacity(0.09))
+                        .clipShape(Circle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Отменить ввод")
+                .opacity(showsCancelButton ? 1 : 0)
+                .allowsHitTesting(showsCancelButton)
+                .disabled(!showsCancelButton)
+                .accessibilityHidden(!showsCancelButton)
             }
 
             captureMetadataChips
@@ -903,6 +908,7 @@ struct QuickCaptureCard: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...(voiceInput.isListening ? 9 : 3))
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .focused($focusedField, equals: .title)
                     .allowsHitTesting(!voiceInput.isListening)
 #if os(iOS)
@@ -914,21 +920,26 @@ struct QuickCaptureCard: View {
                     .padding(.vertical, 9)
                     .contentTransition(.interpolate)
 
-                if !voiceInput.isListening && (focusedField == .title || !trimmedDraft.isEmpty) {
-                    detailsDisclosureButton(size: 40)
+                detailsDisclosureButton(size: 40)
+                    .opacity(homeActionsVisible ? 1 : 0)
+                    .allowsHitTesting(homeActionsVisible)
+                    .disabled(!homeActionsVisible)
+                    .accessibilityHidden(!homeActionsVisible)
 
-                    Button(action: cancelDraft) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 40, height: 40)
-                            .background(Color.secondary.opacity(0.09))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Отменить ввод")
-                    .transition(.scale.combined(with: .opacity))
+                Button(action: cancelDraft) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, height: 40)
+                        .background(Color.secondary.opacity(0.09))
+                        .clipShape(Circle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Отменить ввод")
+                .opacity(homeActionsVisible ? 1 : 0)
+                .allowsHitTesting(homeActionsVisible)
+                .disabled(!homeActionsVisible)
+                .accessibilityHidden(!homeActionsVisible)
             }
 
             captureMetadataChips
@@ -1147,6 +1158,10 @@ struct QuickCaptureCard: View {
             || smartResult != nil
             || isDescriptionPresented
             || !trimmedDetails.isEmpty
+    }
+
+    private var homeActionsVisible: Bool {
+        !voiceInput.isListening && (focusedField == .title || !trimmedDraft.isEmpty)
     }
 
     private func voiceButton(size: CGFloat) -> some View {
