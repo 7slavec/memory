@@ -231,12 +231,12 @@ struct QuickCaptureCard: View {
                                           hiddenX: -MemoryMotion.pageDistance)
             }
         }
-        .animation(isFloating ? nil : .spring(response: 0.46, dampingFraction: 0.9), value: smartResult != nil)
+        .animation(reduceMotion || isFloating ? nil : .easeInOut(duration: 0.22), value: smartResult != nil)
         .animation(reduceMotion || isFloating ? nil : MemoryTheme.motion, value: voiceInput.isListening)
         .animation(reduceMotion || isFloating ? nil : MemoryTheme.motion, value: isFinalizingVoiceSubmission)
         .animation(isFloating ? nil : .spring(response: 0.42, dampingFraction: 0.9), value: pendingVoiceClarification != nil)
         .animation(.easeInOut(duration: 0.22), value: isDescriptionPresented)
-        .animation(.spring(response: 0.46, dampingFraction: 0.9), value: isComposerExpanded)
+        .animation(reduceMotion || isFloating ? nil : .easeInOut(duration: 0.22), value: isComposerExpanded)
         .onChange(of: draft) { oldValue, newValue in
             if !voiceInput.isListening,
                Self.isSingleInsertedLineBreak(from: oldValue, to: newValue) {
@@ -468,9 +468,6 @@ struct QuickCaptureCard: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...(voiceInput.isListening ? 9 : 3))
                     .fixedSize(horizontal: false, vertical: true)
-                    // The desktop home actions float over the field instead of
-                    // setting the empty card's height. Keep their text space reserved.
-                    .padding(.trailing, isDesktopWorkspace ? 104 : 0)
                     .frame(minWidth: 0, maxWidth: .infinity,
                            minHeight: isDesktopWorkspace ? 0 : compactControlSize,
                            alignment: .leading)
@@ -487,7 +484,18 @@ struct QuickCaptureCard: View {
                     voiceButton(size: compactControlSize)
                 }
 
-                if !isDesktopWorkspace {
+                if isDesktopWorkspace {
+                    HStack(spacing: 12) {
+                        detailsDisclosureButton(size: compactControlSize)
+                        cancelButton(size: compactControlSize)
+                    }
+                    .opacity(desktopWorkspaceActionsVisible ? 1 : 0)
+                    .scaleEffect(desktopWorkspaceActionsVisible ? 1 : 0.94)
+                    .allowsHitTesting(desktopWorkspaceActionsVisible)
+                    .disabled(!desktopWorkspaceActionsVisible)
+                    .accessibilityHidden(!desktopWorkspaceActionsVisible)
+                    .animation(composerRevealAnimation, value: desktopWorkspaceActionsVisible)
+                } else {
                     detailsDisclosureButton(size: compactControlSize)
                         .opacity(!voiceInput.isListening && isComposerExpanded ? 1 : 0)
                         .allowsHitTesting(!voiceInput.isListening && isComposerExpanded)
@@ -499,20 +507,6 @@ struct QuickCaptureCard: View {
                         .allowsHitTesting(showsCancelButton)
                         .disabled(!showsCancelButton)
                         .accessibilityHidden(!showsCancelButton)
-                }
-            }
-            .overlay(alignment: .trailing) {
-                if isDesktopWorkspace {
-                    HStack(spacing: 12) {
-                        detailsDisclosureButton(size: compactControlSize)
-                        cancelButton(size: compactControlSize)
-                    }
-                    .opacity(desktopWorkspaceActionsVisible ? 1 : 0)
-                    .allowsHitTesting(desktopWorkspaceActionsVisible)
-                    .disabled(!desktopWorkspaceActionsVisible)
-                    .accessibilityHidden(!desktopWorkspaceActionsVisible)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.16),
-                               value: desktopWorkspaceActionsVisible)
                 }
             }
 
@@ -548,6 +542,7 @@ struct QuickCaptureCard: View {
         .padding(.horizontal, usesMinimalDesktopChrome ? 12 : (isDocked ? 12 : 18))
         .padding(.vertical, desktopWorkspacePadding ?? (usesMinimalDesktopChrome ? 12 : (isDocked ? 12 : 18)))
         .modifier(QuickCaptureSurfaceModifier(isMinimal: usesMinimalDesktopChrome))
+        .animation(composerRevealAnimation, value: showsCaptureMetadataChips)
     }
 
 #if os(macOS)
@@ -934,10 +929,12 @@ struct QuickCaptureCard: View {
                     .contentTransition(.interpolate)
 
                 detailsDisclosureButton(size: 40)
-                    .opacity(homeActionsVisible ? 1 : 0)
-                    .allowsHitTesting(homeActionsVisible)
-                    .disabled(!homeActionsVisible)
-                    .accessibilityHidden(!homeActionsVisible)
+                    .opacity(homeDetailsVisible ? 1 : 0)
+                    .scaleEffect(homeDetailsVisible ? 1 : 0.94)
+                    .allowsHitTesting(homeDetailsVisible)
+                    .disabled(!homeDetailsVisible)
+                    .accessibilityHidden(!homeDetailsVisible)
+                    .animation(composerRevealAnimation, value: homeDetailsVisible)
 
                 Button(action: cancelDraft) {
                     Image(systemName: "xmark")
@@ -949,10 +946,12 @@ struct QuickCaptureCard: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Отменить ввод")
-                .opacity(homeActionsVisible ? 1 : 0)
-                .allowsHitTesting(homeActionsVisible)
-                .disabled(!homeActionsVisible)
-                .accessibilityHidden(!homeActionsVisible)
+                .opacity(homeCancelVisible ? 1 : 0)
+                .scaleEffect(homeCancelVisible ? 1 : 0.94)
+                .allowsHitTesting(homeCancelVisible)
+                .disabled(!homeCancelVisible)
+                .accessibilityHidden(!homeCancelVisible)
+                .animation(composerRevealAnimation, value: homeCancelVisible)
             }
 
             captureMetadataChips
@@ -984,6 +983,7 @@ struct QuickCaptureCard: View {
                 .stroke(Color.primary.opacity(0.07), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.07), radius: 22, y: 10)
+        .animation(composerRevealAnimation, value: showsCaptureMetadataChips)
     }
 
     private func handleHomeVoiceTap() {
@@ -1041,7 +1041,7 @@ struct QuickCaptureCard: View {
     }
 
     @ViewBuilder private var captureMetadataChips: some View {
-        if !trimmedDraft.isEmpty && capturePreviewState != .uncertain {
+        if showsCaptureMetadataChips {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     if case .multiple(let count) = capturePreviewState {
@@ -1101,7 +1101,7 @@ struct QuickCaptureCard: View {
                 }
                 .fixedSize(horizontal: true, vertical: false)
             }
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(.opacity.combined(with: .offset(y: 5)))
         }
     }
 
@@ -1158,7 +1158,7 @@ struct QuickCaptureCard: View {
 #endif
     }
 
-    private var desktopWorkspacePadding: CGFloat? { isDesktopWorkspace ? 16 : nil }
+    private var desktopWorkspacePadding: CGFloat? { isDesktopWorkspace ? 12 : nil }
 
     private var desktopWorkspaceActionsVisible: Bool {
         isDesktopWorkspace && !voiceInput.isListening && !trimmedDraft.isEmpty
@@ -1200,8 +1200,20 @@ struct QuickCaptureCard: View {
             || !trimmedDetails.isEmpty
     }
 
-    private var homeActionsVisible: Bool {
+    private var homeDetailsVisible: Bool {
         !voiceInput.isListening && !trimmedDraft.isEmpty
+    }
+
+    private var homeCancelVisible: Bool {
+        !voiceInput.isListening && (focusedField != nil || !trimmedDraft.isEmpty)
+    }
+
+    private var showsCaptureMetadataChips: Bool {
+        !trimmedDraft.isEmpty && capturePreviewState != .uncertain
+    }
+
+    private var composerRevealAnimation: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 0.22)
     }
 
     private func voiceButton(size: CGFloat) -> some View {
