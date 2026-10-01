@@ -5,12 +5,16 @@ enum ActiveEventCornerGeometry {
         pow((1 + cos(cycle * 6 * .pi)) / 2, 3)
     }
 
+    static func topTrailingRadius(cornerRadius: CGFloat, pulse: CGFloat) -> CGFloat {
+        cornerRadius - min(10, cornerRadius * 0.55) * min(max(pulse, 0), 1)
+    }
+
     static func outline(in rect: CGRect, cornerRadius: CGFloat, pulse: CGFloat) -> Path {
         UnevenRoundedRectangle(
             topLeadingRadius: cornerRadius,
             bottomLeadingRadius: cornerRadius,
             bottomTrailingRadius: cornerRadius,
-            topTrailingRadius: max(0, cornerRadius - 3 * pulse)
+            topTrailingRadius: topTrailingRadius(cornerRadius: cornerRadius, pulse: pulse)
         ).path(in: rect)
     }
 }
@@ -30,7 +34,8 @@ struct ActiveEventSurface: View {
                 let cycle = timeline.date.timeIntervalSinceReferenceDate / 4.5
                 // A new ring begins every third of the cycle; the corner breathes at that instant.
                 let pulse = isMoving ? ActiveEventCornerGeometry.pulse(cycle: cycle) : 0
-                let topTrailingRadius = max(0, cornerRadius - 3 * CGFloat(pulse))
+                let topTrailingRadius = ActiveEventCornerGeometry.topTrailingRadius(
+                    cornerRadius: cornerRadius, pulse: CGFloat(pulse))
                 let outline = ActiveEventCornerGeometry.outline(
                     in: CGRect(origin: .zero, size: size),
                     cornerRadius: cornerRadius,
@@ -64,8 +69,8 @@ struct ActiveEventSurface: View {
                                       control: CGPoint(x: size.width - 0.5, y: 0.5))
                     path.addLine(to: CGPoint(x: size.width - 0.5, y: edgeReach))
                 }
-                context.stroke(edge, with: .color(MemoryTheme.onEventCard.opacity(0.04 + 0.10 * pulse)),
-                               lineWidth: 1)
+                context.stroke(edge, with: .color(MemoryTheme.onEventCard.opacity(0.04 + 0.16 * pulse)),
+                               lineWidth: 1.2)
             }
             .clipped()
             .accessibilityHidden(true)
