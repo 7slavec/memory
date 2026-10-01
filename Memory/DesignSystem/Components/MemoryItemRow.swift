@@ -50,14 +50,16 @@ struct MemoryItemRow: View {
         }
         .padding(MemoryDensity.recordPadding)
         .foregroundStyle(item.isEvent ? MemoryTheme.onEventCard : MemoryTheme.accent)
-        .background(item.isEvent ? (hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
-                    : (hovered ? MemoryTheme.raised : MemoryTheme.card),
-                    in: RoundedRectangle(cornerRadius: MemoryDensity.recordRadius))
-        .overlay {
-            if active {
-                ActiveEventPulse(cornerRadius: MemoryDensity.recordRadius)
-                    .allowsHitTesting(false)
-            }
+        .background {
+            RoundedRectangle(cornerRadius: MemoryDensity.recordRadius)
+                .fill(item.isEvent ? (hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
+                      : (hovered ? MemoryTheme.raised : MemoryTheme.card))
+                .overlay {
+                    if active {
+                        ActiveEventRings(cornerRadius: MemoryDensity.recordRadius)
+                            .allowsHitTesting(false)
+                    }
+                }
         }
         .overlay {
             if isOverdue {
@@ -88,7 +90,7 @@ struct MemoryItemRow: View {
             if let remaining {
                 Text(remaining.display)
                     .font(.system(size: remaining.hasDays ? MemoryDensity.recordTime - 7 : MemoryDensity.recordTime,
-                                  weight: .medium, design: .rounded))
+                                  weight: .semibold, design: .rounded))
                     .tracking(remaining.hasDays ? -0.8 : -1.2)
                     .monospacedDigit().lineLimit(1).minimumScaleFactor(0.85)
                     .accessibilityLabel(remaining.accessibilityText)

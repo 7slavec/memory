@@ -1,27 +1,40 @@
 import SwiftUI
 
-/// Motion belongs to the live event only; ordinary cards never start an animation.
-struct ActiveEventPulse: View {
+/// Three clipped waves expand from the top trailing corner without changing layout.
+/// Only visible, active events ask SwiftUI for animation frames.
+struct ActiveEventRings: View {
     let cornerRadius: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var bright = false
+    @State private var isVisible = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(MemoryTheme.onEventCard.opacity(bright && !reduceMotion ? 0.10 : 0.015))
-            .onAppear(perform: begin)
-            .onChange(of: scenePhase) { _, _ in begin() }
-            .onDisappear { bright = false }
+        let isMoving = isVisible && !reduceMotion && scenePhase == .active
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isMoving)) { timeline in
+            Canvas(rendersAsynchronously: true) { context, size in
+                let origin = CGPoint(x: size.width - 8, y: 8)
+                let reach = hypot(size.width + 8, size.height + 8)
+                for index in 0..<3 {
+                    let progress: Double = isMoving
+                        ? (timeline.date.timeIntervalSinceReferenceDate / 1.55
+                           + Double(index) / 3).truncatingRemainder(dividingBy: 1)
+                        : 0.25 + Double(index) * 0.22
+                    let radius = 5 + progress * reach
+                    let fade = pow(1 - progress, 1.2)
+                    let ring = Path(ellipseIn: CGRect(x: origin.x - radius,
+                                                      y: origin.y - radius,
+                                                      width: radius * 2,
+                                                      height: radius * 2))
+                    context.fill(ring, with: .color(MemoryTheme.onEventCard.opacity(0.05 * fade)))
+                    context.stroke(ring, with: .color(MemoryTheme.onEventCard.opacity(0.45 * fade)),
+                                   lineWidth: 1.7)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .accessibilityHidden(true)
-    }
-
-    private func begin() {
-        bright = false
-        guard !reduceMotion, scenePhase == .active else { return }
-        withAnimation(.easeInOut(duration: 2.1).repeatForever(autoreverses: true)) {
-            bright = true
         }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
     }
 }
 
@@ -29,19 +42,22 @@ struct ActiveEventCounterPulse: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var bright = false
+    private let livelyGreen = Color(red: 0.18, green: 0.39, blue: 0.03)
 
     func body(content: Content) -> some View {
         content
-            .opacity(bright && !reduceMotion ? 0.76 : 1)
+            .foregroundStyle(bright && !reduceMotion ? livelyGreen : MemoryTheme.onEventCard)
+            .shadow(color: livelyGreen.opacity(bright && !reduceMotion ? 0.22 : 0), radius: 2)
+            .scaleEffect(bright && !reduceMotion ? 1.025 : 1)
             .onAppear(perform: begin)
             .onChange(of: scenePhase) { _, _ in begin() }
-            .onDisappear { bright = false }
+            .onDisappear { withTransaction(Transaction(animation: nil)) { bright = false } }
     }
 
     private func begin() {
-        bright = false
+        withTransaction(Transaction(animation: nil)) { bright = false }
         guard !reduceMotion, scenePhase == .active else { return }
-        withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
+        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
             bright = true
         }
     }
@@ -65,18 +81,20 @@ struct ActiveEventBadge: View {
                         .font(.system(size: compact ? 12 : 14, weight: .semibold))
                     Spacer(minLength: 4)
                     Text(remaining.display)
-                        .font(.system(size: compact ? 16 : 21, weight: .semibold, design: .rounded))
+                        .font(.system(size: compact ? 16 : 21, weight: .bold, design: .rounded))
                         .monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
                         .modifier(ActiveEventCounterPulse())
                 }
                 .foregroundStyle(MemoryTheme.onEventCard)
                 .padding(.horizontal, compact ? 12 : 16)
                 .frame(minHeight: compact ? 38 : 48)
-                .background(MemoryTheme.eventCard,
-                            in: RoundedRectangle(cornerRadius: compact ? 13 : 17))
-                .overlay {
-                    ActiveEventPulse(cornerRadius: compact ? 13 : 17)
-                        .allowsHitTesting(false)
+                .background {
+                    RoundedRectangle(cornerRadius: compact ? 13 : 17)
+                        .fill(MemoryTheme.eventCard)
+                        .overlay {
+                            ActiveEventRings(cornerRadius: compact ? 13 : 17)
+                                .allowsHitTesting(false)
+                        }
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Событие идёт. \(remaining.accessibilityText)")
