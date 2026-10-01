@@ -1,9 +1,24 @@
 import SwiftUI
 
-/// Three clipped waves expand from the top trailing corner without changing layout.
-/// Only visible, active events ask SwiftUI for animation frames.
-struct ActiveEventRings: View {
+enum ActiveEventCornerGeometry {
+    static func pulse(cycle: Double) -> Double {
+        pow((1 + cos(cycle * 6 * .pi)) / 2, 3)
+    }
+
+    static func outline(in rect: CGRect, cornerRadius: CGFloat, pulse: CGFloat) -> Path {
+        UnevenRoundedRectangle(
+            topLeadingRadius: cornerRadius,
+            bottomLeadingRadius: cornerRadius,
+            bottomTrailingRadius: cornerRadius,
+            topTrailingRadius: max(0, cornerRadius - 3 * pulse)
+        ).path(in: rect)
+    }
+}
+
+/// The active surface and its clipped waves share one clock and never change layout.
+struct ActiveEventSurface: View {
     let cornerRadius: CGFloat
+    let fill: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var isVisible = false
@@ -12,12 +27,22 @@ struct ActiveEventRings: View {
         let isMoving = isVisible && !reduceMotion && scenePhase == .active
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isMoving)) { timeline in
             Canvas(rendersAsynchronously: true) { context, size in
+                let cycle = timeline.date.timeIntervalSinceReferenceDate / 4.5
+                // A new ring begins every third of the cycle; the corner breathes at that instant.
+                let pulse = isMoving ? ActiveEventCornerGeometry.pulse(cycle: cycle) : 0
+                let topTrailingRadius = max(0, cornerRadius - 3 * CGFloat(pulse))
+                let outline = ActiveEventCornerGeometry.outline(
+                    in: CGRect(origin: .zero, size: size),
+                    cornerRadius: cornerRadius,
+                    pulse: CGFloat(pulse))
+                context.fill(outline, with: .color(fill))
+                context.clip(to: outline)
+
                 let origin = CGPoint(x: size.width - 8, y: 8)
                 let reach = hypot(size.width + 8, size.height + 8)
                 for index in 0..<3 {
                     let progress: Double = isMoving
-                        ? (timeline.date.timeIntervalSinceReferenceDate / 4.5
-                           + Double(index) / 3).truncatingRemainder(dividingBy: 1)
+                        ? (cycle + Double(index) / 3).truncatingRemainder(dividingBy: 1)
                         : 0.25 + Double(index) * 0.22
                     let easedProgress = progress * progress * (3 - 2 * progress)
                     let radius = 5 + easedProgress * reach
@@ -30,8 +55,19 @@ struct ActiveEventRings: View {
                     context.stroke(ring, with: .color(MemoryTheme.onEventCard.opacity(0.45 * fade)),
                                    lineWidth: 1.7)
                 }
+
+                let edgeReach = min(52, min(size.width / 3, size.height))
+                let edge = Path { path in
+                    path.move(to: CGPoint(x: size.width - edgeReach, y: 0.5))
+                    path.addLine(to: CGPoint(x: size.width - topTrailingRadius, y: 0.5))
+                    path.addQuadCurve(to: CGPoint(x: size.width - 0.5, y: topTrailingRadius),
+                                      control: CGPoint(x: size.width - 0.5, y: 0.5))
+                    path.addLine(to: CGPoint(x: size.width - 0.5, y: edgeReach))
+                }
+                context.stroke(edge, with: .color(MemoryTheme.onEventCard.opacity(0.04 + 0.10 * pulse)),
+                               lineWidth: 1)
             }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .clipped()
             .accessibilityHidden(true)
         }
         .onAppear { isVisible = true }
@@ -88,12 +124,8 @@ struct ActiveEventBadge: View {
                 .padding(.horizontal, compact ? 12 : 16)
                 .frame(minHeight: compact ? 38 : 48)
                 .background {
-                    RoundedRectangle(cornerRadius: compact ? 13 : 17)
-                        .fill(MemoryTheme.eventCard)
-                        .overlay {
-                            ActiveEventRings(cornerRadius: compact ? 13 : 17)
-                                .allowsHitTesting(false)
-                        }
+                    ActiveEventSurface(cornerRadius: compact ? 13 : 17, fill: MemoryTheme.eventCard)
+                        .allowsHitTesting(false)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Событие идёт. \(remaining.accessibilityText)")

@@ -51,15 +51,15 @@ struct MemoryItemRow: View {
         .padding(MemoryDensity.recordPadding)
         .foregroundStyle(item.isEvent ? MemoryTheme.onEventCard : MemoryTheme.accent)
         .background {
-            RoundedRectangle(cornerRadius: MemoryDensity.recordRadius)
-                .fill(item.isEvent ? (hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
-                      : (hovered ? MemoryTheme.raised : MemoryTheme.card))
-                .overlay {
-                    if active {
-                        ActiveEventRings(cornerRadius: MemoryDensity.recordRadius)
-                            .allowsHitTesting(false)
-                    }
-                }
+            if active {
+                ActiveEventSurface(cornerRadius: MemoryDensity.recordRadius,
+                                   fill: hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
+                    .allowsHitTesting(false)
+            } else {
+                RoundedRectangle(cornerRadius: MemoryDensity.recordRadius)
+                    .fill(item.isEvent ? (hovered ? MemoryTheme.eventCardHover : MemoryTheme.eventCard)
+                          : (hovered ? MemoryTheme.raised : MemoryTheme.card))
+            }
         }
         .overlay {
             if isOverdue {
